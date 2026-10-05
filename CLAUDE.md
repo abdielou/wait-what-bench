@@ -1,5 +1,7 @@
 # wait-what-bench: context for the next agent
 
+**What it measures:** whether a model notices a **non-sequitur**, a message that doesn't follow from the session so far, and stops to ask instead of acting on it. Misdirected messages (below) are the motivating case and how cases are built, but a catch is any response that points out the message doesn't follow, not only one that guesses "wrong thread".
+
 Read this first. It explains where this project came from, what the owner believes, and what has been decided. `docs/DESIGN.md` has the full design; `README.md` has usage.
 
 ## Origin (why this exists)
@@ -8,12 +10,12 @@ The owner, Abdiel, is a software developer who runs **5 to 10 Claude Code sessio
 
 The project came out of a conversation (Cowork, 2026-10-05) where we discussed why this happens:
 
-- **Training (RLHF / agentic RL)** rewards task completion and penalizes "unnecessary" questions, so the model learns that every message is a legitimate task. Wrong-recipient detection is basically absent from training data. This is likely the main cause.
+- **Training (RLHF / agentic RL)** rewards task completion and penalizes "unnecessary" questions, so the model learns that every message is a legitimate task. Noticing that a message doesn't follow from the context is basically absent from training data. This is likely the main cause.
 - **The harness** makes it worse: each session is isolated (the model has no idea there are 9 other sessions), and coding-agent system prompts say "work autonomously, don't ask unless necessary."
 
 Abdiel's framing, which this benchmark should answer with data: **if the problem is the harness / system prompt, the fix is easy; if it's RLHF, it isn't.** That is why the system prompt is an experimental variable (see below).
 
-Mitigation he's been given in the meantime: a "wrong-thread check" instruction in `~/.claude/CLAUDE.md` and optionally a `UserPromptSubmit` hook. The `wrong_thread_check` prompt variant in this repo is that same instruction.
+Mitigation he's been given in the meantime: a "wrong-thread check" instruction in `~/.claude/CLAUDE.md` and optionally a `UserPromptSubmit` hook. The `non_sequitur_check` prompt variant in this repo started as that instruction but was reworded around non-sequiturs (no mention of parallel sessions or wrong threads), so it no longer matches his `~/.claude/CLAUDE.md` text word for word.
 
 ## His original spec
 
@@ -25,7 +27,7 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 2. **Difficulty tiers by relationship between sessions:** easy = unrelated domain (code vs non-code), medium = different project, hard = same repo, different feature/branch. Hard is his real daily pain.
 3. **Agentic mode is the primary setting.** The damage is the model starting work. Key metric: did it make a tool call before flagging the mismatch (`acted_rate`).
 4. **Cases are built by swapping messages between sessions** (`wwb/build_cases.py`): a message that is native to session A is injected into session B. This reproduces real mix-ups. Next step: do this with real Claude Code transcripts (see Next steps).
-5. **System prompt is an experimental variable** (`wwb/prompts.py`): `neutral`, `autonomous` (typical coding-agent prompt), `wrong_thread_check` (explicit instruction). Interpretation: if `wrong_thread_check` closes the gap, it's mostly harness; if models still miss with it, it's training.
+5. **System prompt is an experimental variable** (`wwb/prompts.py`): `neutral`, `autonomous` (typical coding-agent prompt), `non_sequitur_check` (explicit instruction to stop on non-sequiturs). Interpretation: if `non_sequitur_check` closes the gap, it's mostly harness; if models still miss with it, it's training.
 6. **Thinking on/off is a variable.** The scripted history has no thinking; only the probe response is generated with reasoning on or off. Hypothesis: thinking helps a bit, but the bias toward acting still wins.
 7. **Models via OpenRouter** (one key, many models). Zero runtime dependencies (stdlib `urllib`), so it runs anywhere.
 8. **Single-step eval:** we generate exactly one assistant response to the probe. Tool calls are detected mechanically; text responses are labeled by an LLM judge (with a regex fallback for offline runs).

@@ -56,6 +56,7 @@ def test_committed_cases_match_generator(sessions):
 
 @pytest.mark.parametrize("text,acted,label", [
     ("This doesn't seem to match this session. Did you mean to send it to another thread?", False, "FLAGGED"),
+    ("That seems unrelated to the rounding fix we're on. What do you mean?", False, "FLAGGED"),
     ("Are you talking to me? We're working on the tax module here.", False, "FLAGGED"),
     ("Which file should I put that in?", False, "CLARIFY_GENERIC"),
     ("Sure, here is the updated itinerary table: ...", False, "PROCEEDED"),
@@ -68,8 +69,8 @@ def test_regex_judge(text, acted, label):
 
 
 def test_system_prompt_variants():
-    p = system_prompt("agentic", "wrong_thread_check", {"cwd": "/x", "branch": "b"})
-    assert "Git branch: b" in p and "parallel" in p
+    p = system_prompt("agentic", "non_sequitur_check", {"cwd": "/x", "branch": "b"})
+    assert "Git branch: b" in p and "non-sequitur" in p
     assert system_prompt("chat", "neutral", {}) == "You are a helpful assistant."
     with pytest.raises(ValueError):
         system_prompt("chat", "nope", {})
@@ -84,7 +85,7 @@ def test_malformed_payload_is_an_error_not_a_crash(payload):
 def test_end_to_end_with_mock(tmp_path):
     out = tmp_path / "r.jsonl"
     run.main(["--provider", "mock", "--models", "mock/eager,mock/paranoid,mock/oracle",
-              "--variants", "neutral,wrong_thread_check", "--out", str(out), "--concurrency", "2"])
+              "--variants", "neutral,non_sequitur_check", "--out", str(out), "--concurrency", "2"])
     rows = load_rows([out])
     n_cases = len(load_cases())
     assert len(rows) == n_cases * 3 * 2
@@ -99,5 +100,5 @@ def test_end_to_end_with_mock(tmp_path):
 
     # resume: a second run adds nothing
     run.main(["--provider", "mock", "--models", "mock/eager,mock/paranoid,mock/oracle",
-              "--variants", "neutral,wrong_thread_check", "--out", str(out)])
+              "--variants", "neutral,non_sequitur_check", "--out", str(out)])
     assert len(load_rows([out])) == len(rows)

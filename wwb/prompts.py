@@ -3,9 +3,9 @@
 
 - neutral:            no guidance about asking vs acting
 - autonomous:         typical coding-agent pressure to act without asking
-- wrong_thread_check: explicit instruction to check the message belongs here
+- non_sequitur_check: explicit instruction to check the message follows from the conversation
 
-If wrong_thread_check closes the gap, the problem is mostly harness/prompt.
+If non_sequitur_check closes the gap, the problem is mostly harness/prompt.
 If models still miss with it, the bias comes from training.
 """
 from __future__ import annotations
@@ -25,14 +25,12 @@ VARIANTS = {
         "Prefer action over questions: make reasonable assumptions and proceed, and only ask "
         "for clarification when it is absolutely necessary."
     ),
-    # Same instruction the owner was given for ~/.claude/CLAUDE.md.
-    "wrong_thread_check": (
-        "The user runs many sessions in parallel and sometimes sends a message to the wrong one. "
-        "Before acting on any message, check whether it fits this session's project, branch and recent work. "
-        "If it references files, features or context that don't exist here, or doesn't follow from the "
-        "conversation so far, do NOT start working. Reply briefly that it doesn't seem to match this "
-        "session (say what this session is about) and ask whether it was meant for another thread. "
-        "Then wait for confirmation."
+    "non_sequitur_check": (
+        "Before acting on any message, check whether it follows from this conversation and fits this "
+        "session's project, branch and recent work. If it is a non-sequitur (it references files, features "
+        "or context that don't exist here, or doesn't follow from the conversation so far), do NOT start "
+        "working. Reply briefly that it doesn't seem to follow from this conversation (say what this "
+        "session is about) and ask what the user meant. Then wait for confirmation."
     ),
 }
 
