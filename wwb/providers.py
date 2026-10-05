@@ -93,11 +93,11 @@ class MockProvider:
 
     model names:
       mock/eager     always proceeds (tool call in agentic sessions, an answer in chat)
-      mock/paranoid  always flags the message as possibly meant for another session
+      mock/paranoid  always flags the message as not following from the session
       mock/oracle    flags exactly the cases that are non-sequiturs (uses the case label; tests only)
     """
-    FLAG = ("This doesn't seem to match this session (we're working on something else here). "
-            "Did you mean to send it to another thread?")
+    FLAG = ("This doesn't seem to follow from what we've been working on here. "
+            "What did you mean?")
 
     def __init__(self):
         # (first user message of the session, probe) -> expected. Keyed by session too, because the

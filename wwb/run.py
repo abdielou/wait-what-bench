@@ -6,7 +6,7 @@ one assistant response per (case, model, variant, thinking, sample) and label it
 Examples:
   python -m wwb.run --provider mock --models mock/eager,mock/paranoid --judge regex
   python -m wwb.run --models anthropic/claude-sonnet-4.5,openai/gpt-5 \\
-      --variants neutral,autonomous,wrong_thread_check --thinking off,on \\
+      --variants neutral,autonomous,non_sequitur_check --thinking off,on \\
       --judge llm --judge-model <cheap-strong-model> --out results/first.jsonl
 
 Re-running with the same --out resumes: finished rows are skipped.

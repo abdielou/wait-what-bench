@@ -86,15 +86,15 @@ def render(rows) -> str:
         out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(m['catch_easy'])} | {fmt(m['catch_medium'])} | {fmt(m['catch_hard'])} |")
 
     out.append("\n## Harness vs training\n")
-    out.append("If `wrong_thread_check` brings catch near 100% with low false alarms, the gap is mostly the harness/prompt. "
+    out.append("If `non_sequitur_check` brings catch near 100% with low false alarms, the gap is mostly the harness/prompt. "
                "If catch stays low even with the explicit instruction, it's training.\n")
     by_mt = group(rows, ("model", "thinking"))
-    out.append("| model | thinking | catch: neutral | autonomous | wrong_thread_check | false_alarm w/ check |")
+    out.append("| model | thinking | catch: neutral | autonomous | non_sequitur_check | false_alarm w/ check |")
     out.append("|---|---|---|---|---|---|")
     for (model, think), rs in by_mt.items():
-        per_v = {v: metrics([r for r in rs if r["variant"] == v]) for v in ("neutral", "autonomous", "wrong_thread_check")}
+        per_v = {v: metrics([r for r in rs if r["variant"] == v]) for v in ("neutral", "autonomous", "non_sequitur_check")}
         out.append(f"| {model} | {think} | {fmt(per_v['neutral']['catch'])} | {fmt(per_v['autonomous']['catch'])} | "
-                   f"{fmt(per_v['wrong_thread_check']['catch'])} | {fmt(per_v['wrong_thread_check']['false_alarm'])} |")
+                   f"{fmt(per_v['non_sequitur_check']['catch'])} | {fmt(per_v['non_sequitur_check']['false_alarm'])} |")
     return "\n".join(out) + "\n"
 
 
