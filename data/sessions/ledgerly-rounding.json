@@ -1,0 +1,38 @@
+{
+  "id": "ledgerly-rounding",
+  "kind": "agentic",
+  "domain": "code",
+  "repo": "ledgerly",
+  "env": {"cwd": "/home/dev/ledgerly", "branch": "fix/invoice-rounding", "language": "Python / FastAPI"},
+  "summary": "Fixing a one-cent discrepancy in invoice totals in a Python/FastAPI accounting backend by rounding line items with Decimal before summing.",
+  "history": [
+    {"role": "user", "content": "Invoice INV-2291 shows a total of 1,204.57 but its line items add up to 1,204.56. Find out why."},
+    {"role": "assistant", "content": "Let me find where invoice totals are computed.", "tool_calls": [{"name": "grep", "args": {"pattern": "def total", "path": "ledgerly"}}]},
+    {"role": "tool", "content": "ledgerly/invoices/models.py:41:    def total(self) -> float:\nledgerly/credit_notes/models.py:37:    def total(self) -> float:"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "read_file", "args": {"path": "ledgerly/invoices/models.py"}}]},
+    {"role": "tool", "content": "class InvoiceLine(Base):\n    quantity: float\n    unit_price: float\n\n    def amount(self) -> float:\n        return self.quantity * self.unit_price\n\n\nclass Invoice(Base):\n    lines: list[InvoiceLine]\n\n    def total(self) -> float:\n        return round(sum(l.amount() for l in self.lines), 2)"},
+    {"role": "assistant", "content": "Found it. `total()` sums the unrounded line amounts and rounds once at the end, while the PDF shows each line already rounded to cents. With several lines ending in fractions of a cent, the two can differ by 0.01. INV-2291 has 7 lines with quantities like 3.5 hours, which is exactly that case. Should lines be rounded first and then summed?"},
+    {"role": "user", "content": "Yes. Lines rounded first, then summed. And use Decimal, not float."},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "edit_file", "args": {"path": "ledgerly/invoices/models.py", "old": "    def amount(self) -> float:\n        return self.quantity * self.unit_price", "new": "    def amount(self) -> Decimal:\n        raw = Decimal(str(self.quantity)) * Decimal(str(self.unit_price))\n        return raw.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)"}}]},
+    {"role": "tool", "content": "Edited ledgerly/invoices/models.py (1 replacement)"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "edit_file", "args": {"path": "ledgerly/invoices/models.py", "old": "    def total(self) -> float:\n        return round(sum(l.amount() for l in self.lines), 2)", "new": "    def total(self) -> Decimal:\n        return sum((l.amount() for l in self.lines), Decimal('0.00'))"}}]},
+    {"role": "tool", "content": "Edited ledgerly/invoices/models.py (1 replacement)"},
+    {"role": "assistant", "content": "Now a regression test using INV-2291's actual lines.", "tool_calls": [{"name": "write_file", "args": {"path": "tests/invoices/test_total_rounding.py", "content": "from decimal import Decimal\nfrom tests.fixtures import invoice_2291\n\ndef test_total_matches_sum_of_rounded_lines():\n    inv = invoice_2291()\n    assert inv.total() == sum(l.amount() for l in inv.lines)\n    assert inv.total() == Decimal('1204.56')"}}]},
+    {"role": "tool", "content": "Wrote 7 lines to tests/invoices/test_total_rounding.py"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "pytest tests/invoices -q"}}]},
+    {"role": "tool", "content": ".....\n5 passed in 0.41s"},
+    {"role": "assistant", "content": "Fixed. Line amounts are now Decimal, rounded half-up to cents, and the invoice total is the sum of the rounded lines. INV-2291 now totals 1,204.56, and all 5 invoice tests pass."}
+  ],
+  "continuations": [
+    {"id": "led-c1", "text": "apply the same fix to credit notes"},
+    {"id": "led-c2", "text": "add an alembic migration that recomputes stored totals for invoices that are still open"},
+    {"id": "led-c3", "text": "the accountant says use ROUND_HALF_EVEN, not half up"},
+    {"id": "led-c4", "text": "the API still serializes total as a float, make the pydantic schema return it as a string"},
+    {"id": "led-c5", "text": "check whether any paid invoices from last quarter were affected by the old rounding"},
+    {"id": "led-c6", "text": "update the docs for GET /invoices/{id} to mention the rounding rule"}
+  ],
+  "switches": [
+    {"id": "led-s1", "text": "Quick detour, unrelated: add a ruff config to pyproject.toml with line length 100."},
+    {"id": "led-s2", "text": "Unrelated question: what Python version does the Dockerfile use?"}
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "shopfront-tax",
+  "kind": "agentic",
+  "domain": "code",
+  "repo": "shopfront",
+  "env": {"cwd": "/home/dev/shopfront", "branch": "feat/checkout-tax", "language": "TypeScript / Next.js"},
+  "summary": "Adding per-state sales tax to the checkout of a Next.js store. Tax is computed per line item in integer cents and shown in the checkout summary.",
+  "history": [
+    {"role": "user", "content": "We need sales tax in checkout, based on the shipping address state. Start with CA 7.25%, NY 4%, TX 6.25%, OR 0%. Round per line item, half up."},
+    {"role": "assistant", "content": "Let me see how checkout totals are computed today.", "tool_calls": [{"name": "grep", "args": {"pattern": "subtotal", "path": "src"}}]},
+    {"role": "tool", "content": "src/lib/cart.ts:14:export function subtotal(items: CartItem[]): number {\nsrc/app/checkout/Summary.tsx:22:  const sub = subtotal(cart.items);\nsrc/app/checkout/Summary.tsx:31:        <Row label=\"Subtotal\" value={sub} />"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "read_file", "args": {"path": "src/lib/cart.ts"}}]},
+    {"role": "tool", "content": "export type CartItem = { sku: string; price: number; qty: number; taxable: boolean };\n\nexport function subtotal(items: CartItem[]): number {\n  return items.reduce((s, i) => s + i.price * i.qty, 0);\n}\n\nexport function total(items: CartItem[], shipping: number): number {\n  return subtotal(items) + shipping;\n}"},
+    {"role": "assistant", "content": "I'll add a tax module with the rates and per-line rounding, plus tests.", "tool_calls": [{"name": "write_file", "args": {"path": "src/lib/tax.ts", "content": "export const RATES: Record<string, number> = { CA: 0.0725, NY: 0.04, TX: 0.0625, OR: 0 };\n\nexport function lineTax(price: number, qty: number, state: string): number {\n  const rate = RATES[state] ?? 0;\n  return Math.round(price * qty * rate * 100) / 100;\n}\n\nexport function calculateTax(items: { price: number; qty: number; taxable: boolean }[], state: string): number {\n  return items.filter(i => i.taxable).reduce((s, i) => s + lineTax(i.price, i.qty, state), 0);\n}"}}]},
+    {"role": "tool", "content": "Wrote 12 lines to src/lib/tax.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- tax"}}]},
+    {"role": "tool", "content": "PASS  CA rate applied\nPASS  OR has no tax\nPASS  non-taxable items skipped\nFAIL  rounds half up per line item\n  expected 0.73, received 0.72\n\nTests: 1 failed, 3 passed, 4 total"},
+    {"role": "assistant", "content": "The failure is floating point: 10.00 * 0.0725 is 0.72499999..., so Math.round goes down. I'll compute in integer cents instead.", "tool_calls": [{"name": "edit_file", "args": {"path": "src/lib/tax.ts", "old": "return Math.round(price * qty * rate * 100) / 100;", "new": "const cents = Math.round(price * 100) * qty;\n  return Math.round(cents * rate + 1e-9) / 100;"}}]},
+    {"role": "tool", "content": "Edited src/lib/tax.ts (1 replacement)"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- tax"}}]},
+    {"role": "tool", "content": "Tests: 4 passed, 4 total"},
+    {"role": "assistant", "content": "All 4 tax tests pass. Tax is now computed per line item in integer cents with half-up rounding. Next step would be wiring `calculateTax` into the checkout summary. Want me to do that?"},
+    {"role": "user", "content": "yes, wire it into the summary"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "edit_file", "args": {"path": "src/app/checkout/Summary.tsx", "old": "        <Row label=\"Subtotal\" value={sub} />", "new": "        <Row label=\"Subtotal\" value={sub} />\n        <Row label=\"Sales tax\" value={calculateTax(cart.items, address.state)} />"}}]},
+    {"role": "tool", "content": "Edited src/app/checkout/Summary.tsx (1 replacement)"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npx tsc --noEmit"}}]},
+    {"role": "tool", "content": "(exit 0, no output)"},
+    {"role": "assistant", "content": "Done. The checkout summary now shows a \"Sales tax\" row under Subtotal, based on the shipping state, and the typecheck is clean."}
+  ],
+  "continuations": [
+    {"id": "tax-c1", "text": "now show the tax line in the order confirmation email too"},
+    {"id": "tax-c2", "text": "add a test for a cart with mixed taxable and exempt items in CA"},
+    {"id": "tax-c3", "text": "rename calculateTax to computeLineTaxes everywhere"},
+    {"id": "tax-c4", "text": "the PR reviewer wants the rates moved out of tax.ts into a JSON config"},
+    {"id": "tax-c5", "text": "the grand total still doesn't include the tax, fix total() in cart.ts"},
+    {"id": "tax-c6", "text": "add WA at 6.5% and make unknown states throw instead of defaulting to 0"}
+  ],
+  "switches": [
+    {"id": "tax-s1", "text": "Unrelated, but while you're in this repo: what does the prebuild script in package.json do?"},
+    {"id": "tax-s2", "text": "Separate quick task before we continue: bump typescript to the latest 5.x and check the build still passes."}
+  ]
+}

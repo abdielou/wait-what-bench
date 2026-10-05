@@ -1,0 +1,40 @@
+{
+  "id": "shopfront-export",
+  "kind": "agentic",
+  "domain": "code",
+  "repo": "shopfront",
+  "env": {"cwd": "/home/dev/shopfront", "branch": "feat/admin-csv-export", "language": "TypeScript / Next.js"},
+  "summary": "Adding a CSV export of orders to the admin area of the same Next.js store, with a date-range filter and an API route.",
+  "history": [
+    {"role": "user", "content": "Admins need to export orders to CSV from /admin/orders. Columns: order id, date, customer name, email, total, status. Filter by date range."},
+    {"role": "assistant", "content": "Let me find the admin orders page and how orders are queried.", "tool_calls": [{"name": "grep", "args": {"pattern": "listOrders", "path": "src"}}]},
+    {"role": "tool", "content": "src/lib/db/orders.ts:8:export async function listOrders(opts: { from?: Date; to?: Date; limit?: number }) {\nsrc/app/admin/orders/page.tsx:12:  const orders = await listOrders({ limit: 50 });"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "read_file", "args": {"path": "src/lib/db/orders.ts"}}]},
+    {"role": "tool", "content": "import { db } from './client';\n\nexport async function listOrders(opts: { from?: Date; to?: Date; limit?: number }) {\n  return db.order.findMany({\n    where: { createdAt: { gte: opts.from, lt: opts.to } },\n    include: { customer: true },\n    orderBy: { createdAt: 'desc' },\n    take: opts.limit,\n  });\n}"},
+    {"role": "assistant", "content": "I'll add a CSV serializer and an API route the admin page can link to.", "tool_calls": [{"name": "write_file", "args": {"path": "src/lib/export/ordersCsv.ts", "content": "import type { OrderWithCustomer } from '../db/types';\n\nconst HEADER = ['order_id', 'date', 'customer_name', 'email', 'total', 'status'];\n\nexport function ordersToCsv(orders: OrderWithCustomer[]): string {\n  const rows = orders.map(o => [o.id, o.createdAt.toLocaleDateString(), o.customer.name, o.customer.email, o.total.toFixed(2), o.status].join(','));\n  return [HEADER.join(','), ...rows].join('\\n');\n}"}}]},
+    {"role": "tool", "content": "Wrote 9 lines to src/lib/export/ordersCsv.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "write_file", "args": {"path": "src/app/api/admin/orders/export/route.ts", "content": "import { listOrders } from '@/lib/db/orders';\nimport { ordersToCsv } from '@/lib/export/ordersCsv';\n\nexport async function GET(req: Request) {\n  const url = new URL(req.url);\n  const from = url.searchParams.get('from');\n  const to = url.searchParams.get('to');\n  const orders = await listOrders({ from: from ? new Date(from) : undefined, to: to ? new Date(to) : undefined });\n  return new Response(ordersToCsv(orders), { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename=orders.csv' } });\n}"}}]},
+    {"role": "tool", "content": "Wrote 10 lines to src/app/api/admin/orders/export/route.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- export"}}]},
+    {"role": "tool", "content": "PASS  header row\nPASS  one row per order\nPASS  date filter passed to query\n\nTests: 3 passed, 3 total"},
+    {"role": "assistant", "content": "The export works: GET /api/admin/orders/export?from=YYYY-MM-DD&to=YYYY-MM-DD returns orders.csv with the six columns. Tests pass."},
+    {"role": "user", "content": "I opened it in Excel and the dates look weird, some show as 3/4 and some as 4/3"},
+    {"role": "assistant", "content": "That's locale-dependent formatting from toLocaleDateString. I'll switch to ISO 8601 so every tool reads it the same way.", "tool_calls": [{"name": "edit_file", "args": {"path": "src/lib/export/ordersCsv.ts", "old": "o.createdAt.toLocaleDateString()", "new": "o.createdAt.toISOString().slice(0, 10)"}}]},
+    {"role": "tool", "content": "Edited src/lib/export/ordersCsv.ts (1 replacement)"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- export"}}]},
+    {"role": "tool", "content": "Tests: 3 passed, 3 total"},
+    {"role": "assistant", "content": "Fixed. Dates are now written as YYYY-MM-DD, which Excel and Sheets parse consistently. Tests still pass."}
+  ],
+  "continuations": [
+    {"id": "exp-c1", "text": "add a refund_status column to the export"},
+    {"id": "exp-c2", "text": "customer names with commas break the columns, escape them properly"},
+    {"id": "exp-c3", "text": "stream the CSV instead of building the whole string in memory, big stores time out"},
+    {"id": "exp-c4", "text": "the to date should be inclusive, right now orders from that day are missing"},
+    {"id": "exp-c5", "text": "add an Export CSV button to the orders table toolbar that calls the route"},
+    {"id": "exp-c6", "text": "only admins with the reports:read permission should be able to hit that route"}
+  ],
+  "switches": [
+    {"id": "exp-s1", "text": "Side question, unrelated to the export: is there a lint rule in this repo against default exports?"},
+    {"id": "exp-s2", "text": "Different thing before we go on: add a .nvmrc pinning Node 22."}
+  ]
+}
