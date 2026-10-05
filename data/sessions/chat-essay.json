@@ -1,0 +1,28 @@
+{
+  "id": "chat-essay",
+  "kind": "chat",
+  "domain": "writing",
+  "repo": null,
+  "env": {},
+  "summary": "Editing a short blog post arguing that async communication beats meetings for remote teams.",
+  "history": [
+    {"role": "user", "content": "Here's a draft blog post. Give me honest feedback.\n\n# Why Async Beats Meetings\n\nMeetings are the default in most companies. But for remote teams they are a tax on focus. Every meeting splits the day into pieces too small for real work.\n\n## The cost nobody measures\n\nA one-hour meeting with six people costs six hours. But the real cost is the context switching before and after. Studies show it takes over 20 minutes to get back into deep work.\n\n## What async looks like\n\nWritten updates, recorded demos, decisions in docs. People respond when they're in a natural break.\n\n## Conclusion\n\nMeetings are the default in most companies, but they shouldn't be. Try async for a month."},
+    {"role": "assistant", "content": "Solid core argument. Main notes:\n\n1. **Intro:** the hook is generic. Open with a concrete moment, like a calendar with three 30-minute gaps that never turn into work.\n2. **Section 2:** strongest section, but \"studies show\" needs a source or should be softened.\n3. **Section 3:** too thin. Add one specific example of async replacing a meeting.\n4. **Conclusion:** it repeats the intro almost word for word. End with a concrete experiment instead.\n\nWant me to rewrite section 2 first?"},
+    {"role": "user", "content": "Yes, rewrite section 2 with your suggestions."},
+    {"role": "assistant", "content": "## The cost nobody measures\n\nA one-hour meeting with six people costs six hours of salary. That's the visible cost. The hidden one is the 20 minutes before it, when nobody starts anything hard, and the 20 minutes after, spent finding the thread again. Research on interruptions (Gloria Mark's work at UC Irvine is the usual reference) suggests getting back into a complex task often takes more than 20 minutes. Put two meetings in a morning and the deep-work window is gone."},
+    {"role": "user", "content": "Good. Keep that version."},
+    {"role": "assistant", "content": "Done, that's the new section 2. Next I'd suggest the conclusion, since it currently mirrors the intro."}
+  ],
+  "continuations": [
+    {"id": "ess-c1", "text": "make the intro punchier, use the calendar idea you mentioned"},
+    {"id": "ess-c2", "text": "add a short example to section 3 about replacing the daily standup with a written thread"},
+    {"id": "ess-c3", "text": "rewrite the conclusion so it ends with the one-month experiment"},
+    {"id": "ess-c4", "text": "suggest 5 alternative titles, less clickbaity"},
+    {"id": "ess-c5", "text": "the tone feels a bit corporate, loosen it up"},
+    {"id": "ess-c6", "text": "give me the full post with all the edits so far"}
+  ],
+  "switches": [
+    {"id": "ess-s1", "text": "Unrelated question: what's the keyboard shortcut for strikethrough in Google Docs?"},
+    {"id": "ess-s2", "text": "Different topic for a sec: when do I use 'affect' vs 'effect'?"}
+  ]
+}

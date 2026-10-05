@@ -1,0 +1,15 @@
+[project]
+name = "wait-what-bench"
+version = "0.1.0"
+description = "Does an LLM notice when a message was sent to the wrong session?"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["wwb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
