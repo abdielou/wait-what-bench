@@ -6,6 +6,7 @@ from wwb.build_cases import build, difficulty
 from wwb.data import load_cases, load_sessions, to_openai_messages
 from wwb.judge import regex_label
 from wwb.prompts import system_prompt
+from wwb.providers import OpenRouterProvider
 from wwb.report import load_rows, metrics
 from wwb import run
 
@@ -72,6 +73,12 @@ def test_system_prompt_variants():
     assert system_prompt("chat", "neutral", {}) == "You are a helpful assistant."
     with pytest.raises(ValueError):
         system_prompt("chat", "nope", {})
+
+
+@pytest.mark.parametrize("payload", [{}, {"choices": []}, {"choices": [{}]}, {"choices": None}])
+def test_malformed_payload_is_an_error_not_a_crash(payload):
+    r = OpenRouterProvider._parse(payload)
+    assert r.error and r.text == "" and r.tool_calls == []
 
 
 def test_end_to_end_with_mock(tmp_path):

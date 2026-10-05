@@ -77,9 +77,13 @@ class OpenRouterProvider:
     def _parse(payload: dict) -> Response:
         if "error" in payload:
             return Response(text="", error=json.dumps(payload["error"])[:500])
-        msg = payload["choices"][0]["message"]
-        calls = [{"name": tc["function"]["name"], "arguments": tc["function"].get("arguments", "")}
-                 for tc in (msg.get("tool_calls") or [])]
+        # A malformed payload becomes an errored row (retried on resume) instead of killing the run.
+        try:
+            msg = payload["choices"][0]["message"]
+            calls = [{"name": tc["function"]["name"], "arguments": tc["function"].get("arguments", "")}
+                     for tc in (msg.get("tool_calls") or [])]
+        except (KeyError, IndexError, TypeError) as e:
+            return Response(text="", error=f"unexpected payload ({type(e).__name__}: {e}): {json.dumps(payload)[:300]}")
         return Response(text=msg.get("content") or "", tool_calls=calls,
                         reasoning=msg.get("reasoning"), usage=payload.get("usage", {}))
 
