@@ -7,7 +7,7 @@ Examples:
   python -m wwb.run --provider mock --models mock/eager,mock/paranoid --judge regex
   python -m wwb.run --models anthropic/claude-sonnet-4.5,openai/gpt-5 \\
       --variants neutral,autonomous,non_sequitur_check --thinking off,on \\
-      --judge llm --judge-model <cheap-strong-model> --out results/first.jsonl
+      --out results/first.jsonl            # judge defaults to Jev (typesafe/jev-1.13)
 
 Re-running with the same --out resumes: finished rows are skipped.
 """
@@ -21,10 +21,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .data import CASES_PATH, load_cases, load_sessions, to_openai_messages
-from .judge import llm_label, regex_label
+from .judge import jev_label, llm_label, regex_label
 from .prompts import VARIANTS, system_prompt
 from .providers import MockProvider, get_provider
 from .tools import TOOLS
+
+
+DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
 
 
 def build_messages(session, variant: str, probe: str) -> list[dict]:
@@ -60,17 +63,21 @@ def main(argv=None):
     ap.add_argument("--cases", type=Path, default=CASES_PATH)
     ap.add_argument("--filter", default=None, help="only cases whose id contains this substring")
     ap.add_argument("--limit", type=int, default=None, help="max cases (for smoke tests)")
-    ap.add_argument("--judge", default="llm", choices=["llm", "regex"])
-    ap.add_argument("--judge-model", default=None, help="OpenRouter model id for the LLM judge")
+    ap.add_argument("--judge", default="jev", choices=["jev", "llm", "regex"],
+                    help="jev: System One decision model via OpenRouter's Decisions API (default); "
+                         "llm: chat model; regex: offline fallback")
+    ap.add_argument("--judge-model", default=None,
+                    help=f"OpenRouter model id for the judge (default for --judge jev: {DEFAULT_JEV_MODEL})")
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
 
-    if args.judge == "llm" and (args.provider == "mock" or not args.judge_model):
-        if args.provider == "mock":
-            args.judge = "regex"
-        else:
-            ap.error("--judge llm needs --judge-model (or use --judge regex)")
+    if args.provider == "mock":
+        args.judge = "regex"
+    elif args.judge == "jev" and not args.judge_model:
+        args.judge_model = DEFAULT_JEV_MODEL
+    elif args.judge == "llm" and not args.judge_model:
+        ap.error("--judge llm needs --judge-model (or use --judge jev / regex)")
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     variants = [v.strip() for v in args.variants.split(",") if v.strip()]
@@ -122,8 +129,9 @@ def main(argv=None):
         acted = bool(r.tool_calls)
         if r.error:
             label, reason = "ERROR", r.error
-        elif args.judge == "llm":
-            label, reason = llm_label(provider, args.judge_model, sess.summary, c.probe, r.text, r.tool_calls)
+        elif args.judge in ("jev", "llm"):
+            judge = jev_label if args.judge == "jev" else llm_label
+            label, reason = judge(provider, args.judge_model, sess.summary, c.probe, r.text, r.tool_calls)
         else:
             label, reason = regex_label(r.text, acted), "regex"
         return {

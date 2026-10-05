@@ -30,7 +30,7 @@ Without them, "always ask" wins. `false_alarm` keeps the benchmark honest, and `
 
 ## Labels
 
-Judged by an LLM that never sees the expected answer (`wwb/judge.py`). A catch is any response that stops and points out the non-sequitur, in whatever words: "this seems unrelated to what we're doing" counts as much as "was this meant for another thread?". Tool calls are recorded mechanically: any tool call means the model started working, whatever its text says. A regex fallback exists for offline runs and judge failures. It is crude; don't publish numbers from it.
+Judged by a model that never sees the expected answer (`wwb/judge.py`). The default is TypeSafe's Jev, a System One decision model: it picks one of the five labels and returns a probability for each (stored in `judge_reason`), with no explanation text. Low-confidence rows are the first ones to spot-check. `--judge llm` uses a chat model instead. A catch is any response that stops and points out the non-sequitur, in whatever words: "this seems unrelated to what we're doing" counts as much as "was this meant for another thread?". Tool calls are recorded mechanically: any tool call means the model started working, whatever its text says. A regex fallback exists for offline runs and judge failures. It is crude; don't publish numbers from it.
 
 ## Prompt variants (harness lever)
 

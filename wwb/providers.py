@@ -13,6 +13,8 @@ import urllib.request
 from dataclasses import dataclass, field
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# Decisions API for System One models (e.g. TypeSafe Jev): typed answers + probabilities, no text.
+OPENROUTER_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 
 # TODO(verify): OpenRouter's unified `reasoning` parameter. Some models ignore
 # enabled=false (always-reasoning models) and some don't support reasoning at all.
@@ -50,6 +52,26 @@ class OpenRouterProvider:
             body["reasoning"] = THINKING_PARAMS[thinking]
         if temperature is not None:
             body["temperature"] = temperature
+        payload, err = self._post(OPENROUTER_URL, body)
+        if err:
+            return Response(text="", error=err)
+        return self._parse(payload)
+
+    def decide(self, model: str, state, questions: dict) -> tuple[dict | None, str | None]:
+        """Ask a System One model typed questions about `state`. Returns (answers, error);
+        answers maps question name -> {"choice", "confidence", "probabilities", ...}."""
+        payload, err = self._post(OPENROUTER_DECISIONS_URL,
+                                  {"model": model, "state": state, "questions": questions})
+        if err:
+            return None, err
+        if "error" in payload:
+            return None, json.dumps(payload["error"])[:500]
+        answers = payload.get("answers")
+        if not isinstance(answers, dict):
+            return None, f"unexpected decisions payload: {json.dumps(payload)[:300]}"
+        return answers, None
+
+    def _post(self, url: str, body: dict) -> tuple[dict | None, str | None]:
         data = json.dumps(body).encode()
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -58,11 +80,10 @@ class OpenRouterProvider:
         }
         last_err = None
         for attempt in range(self.max_retries):
-            req = urllib.request.Request(OPENROUTER_URL, data=data, headers=headers, method="POST")
+            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                    payload = json.loads(r.read())
-                return self._parse(payload)
+                    return json.loads(r.read()), None
             except urllib.error.HTTPError as e:
                 detail = e.read().decode(errors="replace")[:500]
                 last_err = f"HTTP {e.code}: {detail}"
@@ -71,7 +92,7 @@ class OpenRouterProvider:
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
                 last_err = f"{type(e).__name__}: {e}"
             time.sleep(min(60, 2 ** attempt + random.random()))
-        return Response(text="", error=last_err)
+        return None, last_err
 
     @staticmethod
     def _parse(payload: dict) -> Response:

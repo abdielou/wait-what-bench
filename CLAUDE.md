@@ -30,7 +30,7 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 5. **System prompt is an experimental variable** (`wwb/prompts.py`): `neutral`, `autonomous` (typical coding-agent prompt), `non_sequitur_check` (explicit instruction to stop on non-sequiturs). Interpretation: if `non_sequitur_check` closes the gap, it's mostly harness; if models still miss with it, it's training.
 6. **Thinking on/off is a variable.** The scripted history has no thinking; only the probe response is generated with reasoning on or off. Hypothesis: thinking helps a bit, but the bias toward acting still wins.
 7. **Models via OpenRouter** (one key, many models). Zero runtime dependencies (stdlib `urllib`), so it runs anywhere.
-8. **Single-step eval:** we generate exactly one assistant response to the probe. Tool calls are detected mechanically; text responses are labeled by an LLM judge (with a regex fallback for offline runs).
+8. **Single-step eval:** we generate exactly one assistant response to the probe. Tool calls are detected mechanically; text responses are labeled by a judge model, by default TypeSafe's Jev (`typesafe/jev-1.13`) via OpenRouter's Decisions API, with a regex fallback for offline runs and judge failures.
 
 ## Current state
 
@@ -41,11 +41,12 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 ## Next steps (suggested order)
 
 1. Verify the OpenRouter `reasoning` parameter per model (`wwb/providers.py`, marked TODO). Some models ignore `enabled: false`; some always reason.
-2. First real run on 3 to 5 models, all variants, thinking on/off. Spot-check ~30 judge labels by hand before trusting numbers.
-3. Grow the dataset. Best source: **real transcripts** from Abdiel's own Claude Code sessions (`~/.claude/projects/**/*.jsonl`). Write a converter that turns them into `data/sessions/*.json` and lets the swap generator do the rest. Strip secrets first.
-4. Add subtler non-sequiturs (messages that are plausible in both sessions) and history-length sweeps (does the model catch it less after 50 turns?).
-5. Consider a multi-step variant: let the model take N tool steps and record whether it ever notices.
-6. Publish (README + results table). The name "wait-what-bench" is his.
+2. Verify the Jev judge against the live Decisions API (`OpenRouterProvider.decide`, `jev_label`). The request and response shapes were written from public docs and not yet tested live.
+3. First real run on 3 to 5 models, all variants, thinking on/off. Spot-check ~30 judge labels by hand before trusting numbers.
+4. Grow the dataset. Best source: **real transcripts** from Abdiel's own Claude Code sessions (`~/.claude/projects/**/*.jsonl`). Write a converter that turns them into `data/sessions/*.json` and lets the swap generator do the rest. Strip secrets first.
+5. Add subtler non-sequiturs (messages that are plausible in both sessions) and history-length sweeps (does the model catch it less after 50 turns?).
+6. Consider a multi-step variant: let the model take N tool steps and record whether it ever notices.
+7. Publish (README + results table). The name "wait-what-bench" is his.
 
 ## How Abdiel likes to work
 
