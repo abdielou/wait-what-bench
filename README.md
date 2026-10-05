@@ -41,9 +41,11 @@ python -m wwb.report results/run-*.jsonl
 export OPENROUTER_API_KEY=...
 python -m wwb.run --models <model-a>,<model-b> \
     --variants neutral,autonomous,non_sequitur_check --thinking off,on \
-    --judge llm --judge-model <judge-model> --out results/first.jsonl
+    --out results/first.jsonl
 python -m wwb.report results/first.jsonl
 ```
+
+The judge defaults to TypeSafe's Jev (`typesafe/jev-1.13`), a decision model that picks one label and returns a probability for each, via OpenRouter's Decisions API with the same key. Use `--judge llm --judge-model <id>` for a chat-model judge instead.
 
 Re-running with the same `--out` resumes and retries errors. Use `--limit 5` for a cheap smoke test.
 
@@ -56,7 +58,7 @@ wwb/build_cases.py     message-swap generator, difficulty tiers
 wwb/prompts.py         system prompt variants
 wwb/tools.py           fake tools for agentic sessions (never executed)
 wwb/providers.py       OpenRouter + mock models
-wwb/judge.py           labels: LLM judge + regex fallback
+wwb/judge.py           labels: Jev or LLM judge + regex fallback
 wwb/run.py             runner (concurrent, resumable)
 wwb/report.py          markdown/CSV summary
 docs/DESIGN.md         design rationale and open questions

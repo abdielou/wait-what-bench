@@ -4,7 +4,7 @@ import pytest
 
 from wwb.build_cases import build, difficulty
 from wwb.data import load_cases, load_sessions, to_openai_messages
-from wwb.judge import regex_label
+from wwb.judge import LABELS, jev_label, regex_label
 from wwb.prompts import system_prompt
 from wwb.providers import OpenRouterProvider
 from wwb.report import load_rows, metrics
@@ -80,6 +80,35 @@ def test_system_prompt_variants():
 def test_malformed_payload_is_an_error_not_a_crash(payload):
     r = OpenRouterProvider._parse(payload)
     assert r.error and r.text == "" and r.tool_calls == []
+
+
+class FakeDecider:
+    def __init__(self, answers=None, error=None):
+        self.answers, self.error, self.calls = answers, error, []
+
+    def decide(self, model, state, questions):
+        self.calls.append((model, state, questions))
+        return self.answers, self.error
+
+
+def test_jev_judge_request_and_parsing():
+    probs = {"FLAGGED": 0.9, "CLARIFY_GENERIC": 0.05, "PROCEEDED_WITH_NOTE": 0.03, "PROCEEDED": 0.02, "OTHER": 0}
+    fake = FakeDecider({"label": {"type": "choice", "choice": "FLAGGED", "confidence": 0.9, "probabilities": probs}})
+    label, reason = jev_label(fake, "typesafe/jev-1.13", "summary", "probe", "That seems unrelated?", [])
+    assert label == "FLAGGED" and json.loads(reason)["confidence"] == 0.9
+    model, state, questions = fake.calls[0]
+    assert questions["label"]["type"] == "choice" and list(questions["label"]["criteria"]) == LABELS
+    assert state["latest_user_message"] == "probe"
+
+    # a tool call overrides a FLAGGED verdict
+    label, _ = jev_label(fake, "m", "s", "p", "hmm", [{"name": "grep", "arguments": "{}"}])
+    assert label == "PROCEEDED_WITH_NOTE"
+
+
+@pytest.mark.parametrize("fake", [FakeDecider(error="HTTP 500"), FakeDecider({"label": {"choice": "MAYBE"}})])
+def test_jev_judge_falls_back_to_regex(fake):
+    label, reason = jev_label(fake, "m", "s", "p", "Did you mean to send this to another thread?", [])
+    assert label == "FLAGGED" and "regex fallback" in reason
 
 
 def test_end_to_end_with_mock(tmp_path):
