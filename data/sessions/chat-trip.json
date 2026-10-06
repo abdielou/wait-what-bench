@@ -24,5 +24,11 @@
   "switches": [
     {"id": "trip-s1", "text": "Totally different topic: can you suggest a few names for a golden retriever puppy?"},
     {"id": "trip-s2", "text": "Unrelated quick one: how many tablespoons are in a quarter cup?"}
+  ],
+  "question_endings": [
+    {"id": "trip-q1", "assistant": "From the airport to Chiado:\n\n- **Metro:** red line to Alameda, then green line to Baixa-Chiado. About 35 min, under €2 each with a Viva Viagem card.\n- **Taxi or Uber:** 20 to 25 min, roughly €15 to €20. Easiest with luggage.\n- **Aerobus:** stops near Rossio, then a short walk.\n\nWith bags and a hilly last stretch, I'd take an Uber on arrival and use the metro on the way back.\n\nWant me to (1) add restaurant picks for each day, or (2) put together a rough daily budget?", "answers": [{"id": "trip-a1", "text": "2 please"}, {"id": "trip-a2", "text": "both, starting with the first"}]}
+  ],
+  "lures": [
+    {"id": "trip-l1", "targets": ["chat-essay"], "text": "for the conclusion of the trip, day 5, keep the calendar light: two things max, no early start"}
   ]
 }

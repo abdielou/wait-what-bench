@@ -7,6 +7,7 @@ Metrics per (model, variant, thinking):
   false_alarm  share of controls (continuations + legit switches) labeled FLAGGED
   score        balanced: (catch + (1 - false_alarm)) / 2
 Errored rows are excluded from all denominators and counted separately.
+A second table splits catch and false_alarm by probe family (swap, unasked_answer, paste, same_words).
 
 Usage: python -m wwb.report results/run-*.jsonl [--csv out.csv]
 """
@@ -84,6 +85,17 @@ def render(rows) -> str:
     out.append("|---|---|---|---|---|---|")
     for k, m in table:
         out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(m['catch_easy'])} | {fmt(m['catch_medium'])} | {fmt(m['catch_hard'])} |")
+
+    types = sorted({r.get("type", "swap") for r in rows})
+    out.append("\n## By probe family (catch / false_alarm)\n")
+    out.append("| model | variant | thinking | " + " | ".join(types) + " |")
+    out.append("|---|---|---|" + "---|" * len(types))
+    for k, rs in groups.items():
+        cells = []
+        for t in types:
+            m = metrics([r for r in rs if r.get("type", "swap") == t])
+            cells.append(f"{fmt(m['catch'])} / {fmt(m['false_alarm'])}")
+        out.append(f"| {k[0]} | {k[1]} | {k[2]} | " + " | ".join(cells) + " |")
 
     out.append("\n## Harness vs training\n")
     out.append("If `non_sequitur_check` brings catch near 100% with low false alarms, the gap is mostly the harness/prompt. "

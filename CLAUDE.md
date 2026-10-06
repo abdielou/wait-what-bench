@@ -26,7 +26,7 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 1. **Controls are mandatory.** A model that always asks "are you talking to me?" would ace a naive version. Every run also scores legitimate continuations and legitimate topic switches, where the model should just proceed. We report catch rate AND false-alarm rate.
 2. **Difficulty tiers by relationship between sessions:** easy = unrelated domain (code vs non-code), medium = different project, hard = same repo, different feature/branch. Hard is his real daily pain.
 3. **Agentic mode is the primary setting.** The damage is the model starting work. Key metric: did it make a tool call before flagging the mismatch (`acted_rate`).
-4. **Cases are built by swapping messages between sessions** (`wwb/build_cases.py`): a message that is native to session A is injected into session B. This reproduces real mix-ups. Next step: do this with real Claude Code transcripts (see Next steps).
+4. **Cases are built by swapping messages between sessions** (`wwb/build_cases.py`): a message that is native to session A is injected into session B. This reproduces real mix-ups. Plain swaps proved easy to game by word overlap, so there are three more probe families with twin controls: `unasked_answer` (minimal pairs), `paste` and `same_words` (see DESIGN.md, Probe families). Next step: do this with real Claude Code transcripts (see Next steps).
 5. **System prompt is an experimental variable** (`wwb/prompts.py`): `neutral`, `autonomous` (typical coding-agent prompt), `non_sequitur_check` (explicit instruction to stop on non-sequiturs). Interpretation: if `non_sequitur_check` closes the gap, it's mostly harness; if models still miss with it, it's training.
 6. **Thinking on/off is a variable.** The scripted history has no thinking; only the probe response is generated with reasoning on or off. Hypothesis: thinking helps a bit, but the bias toward acting still wins.
 7. **Models via OpenRouter** (one key, many models). Zero runtime dependencies (stdlib `urllib`), so it runs anywhere.
@@ -36,7 +36,7 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 
 - Scaffold complete and tested with the mock provider (`python -m pytest`, `python -m wwb.run --provider mock`).
 - **Not yet run against real models.** Needs `OPENROUTER_API_KEY`.
-- Seed dataset is small and synthetic: 5 sessions (3 agentic coding, 2 chat), roughly 10 native messages each. Enough to validate the pipeline, NOT enough for conclusions.
+- Seed dataset is small and synthetic: 5 sessions (3 agentic coding, 2 chat), 134 cases (88 swaps plus 46 in the newer families). Enough to validate the pipeline, NOT enough for conclusions.
 
 ## Next steps (suggested order)
 

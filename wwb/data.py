@@ -30,6 +30,10 @@ class Session:
     history: list[dict]
     continuations: list[dict]
     switches: list[dict]
+    # Probe families beyond plain swaps (see build_cases.py):
+    question_endings: list[dict] = field(default_factory=list)  # alt last assistant turn + answers to it
+    pastes: list[dict] = field(default_factory=list)  # pasted output (errors, logs, data), no instruction
+    lures: list[dict] = field(default_factory=list)  # continuations reusing other sessions' vocabulary
 
 
 @dataclass
@@ -39,9 +43,11 @@ class Case:
     probe: str
     category: str  # "non_sequitur" | "continuation" | "switch"
     expected: str  # "flag" | "proceed"
-    difficulty: str  # "easy" | "medium" | "hard" | "control"
+    difficulty: str  # "easy" | "medium" | "hard" | "same_session" | "control"
     donor_session_id: str | None = None
     probe_source_id: str | None = None
+    type: str = "swap"  # probe family: "swap" | "unasked_answer" | "paste" | "same_words"
+    ending_id: str | None = None  # replace the last assistant turn with this question ending
     meta: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -54,6 +60,8 @@ def load_session(path: Path) -> Session:
         id=d["id"], kind=d["kind"], domain=d["domain"], repo=d.get("repo"),
         env=d.get("env", {}), summary=d["summary"], history=d["history"],
         continuations=d.get("continuations", []), switches=d.get("switches", []),
+        question_endings=d.get("question_endings", []), pastes=d.get("pastes", []),
+        lures=d.get("lures", []),
     )
 
 
@@ -74,6 +82,14 @@ def load_cases(path: Path = CASES_PATH) -> list[Case]:
             if line.strip():
                 cases.append(Case(**json.loads(line)))
     return cases
+
+
+def case_history(session: Session, case: Case) -> list[dict]:
+    """The session history the probe is sent into, with the case's question ending applied."""
+    if not case.ending_id:
+        return session.history
+    ending = next(e for e in session.question_endings if e["id"] == case.ending_id)
+    return session.history[:-1] + [{"role": "assistant", "content": ending["assistant"]}]
 
 
 def to_openai_messages(history: list[dict], session_id: str = "s") -> list[dict]:

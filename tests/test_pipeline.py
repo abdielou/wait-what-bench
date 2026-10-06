@@ -3,7 +3,7 @@ import json
 import pytest
 
 from wwb.build_cases import build, difficulty
-from wwb.data import load_cases, load_sessions, to_openai_messages
+from wwb.data import case_history, load_cases, load_sessions, to_openai_messages
 from wwb.judge import LABELS, jev_label, regex_label
 from wwb.prompts import system_prompt
 from wwb.providers import OpenRouterProvider
@@ -44,9 +44,36 @@ def test_build_is_deterministic_and_has_controls(sessions):
     assert any(c.difficulty == "hard" for c in cases)
     for c in cases:
         if c.category == "non_sequitur":
-            assert c.donor_session_id != c.session_id and c.expected == "flag"
+            assert c.expected == "flag"
+            # unasked_answer pairs live in one session; every other non-sequitur comes from elsewhere
+            assert (c.donor_session_id == c.session_id) == (c.type == "unasked_answer")
         else:
             assert c.expected == "proceed"
+
+
+def test_new_families_have_twin_controls(sessions):
+    cases = build(sessions)
+    controls = {(c.type, c.probe) for c in cases if c.expected == "proceed"}
+    for typ in ("unasked_answer", "paste", "same_words"):
+        ns = [c for c in cases if c.type == typ and c.expected == "flag"]
+        assert ns, typ
+        for c in ns:
+            assert (typ, c.probe) in controls, f"{c.id} has no control with the same probe"
+    # pastes only go to agentic sessions: the risk is debugging the wrong project
+    assert all(sessions[c.session_id].kind == "agentic" for c in cases if c.type == "paste")
+
+
+def test_unasked_answer_pairs_differ_only_in_last_assistant_turn(sessions):
+    cases = build(sessions)
+    by_id = {c.id: c for c in cases}
+    for c in cases:
+        if c.type == "unasked_answer" and c.expected == "proceed":
+            twin = by_id[c.id.replace("::ans::", "::ns-ans::")]
+            s = sessions[c.session_id]
+            with_q, without_q = case_history(s, c), case_history(s, twin)
+            assert with_q[:-1] == without_q[:-1] and with_q[-1] != without_q[-1]
+            assert with_q[-1]["role"] == "assistant" and "?" in with_q[-1]["content"]
+            assert "?" not in without_q[-1]["content"], f"{s.id}: original ending must not ask anything"
 
 
 def test_committed_cases_match_generator(sessions):

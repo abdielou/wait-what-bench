@@ -11,6 +11,9 @@ Each session file defines:
 - `history`: a scripted conversation that ends on a plain assistant turn
 - `continuations`: messages that naturally follow in *this* session (controls here, donors elsewhere)
 - `switches`: explicit, legitimate topic changes ("Unrelated, but...") that should be answered
+- `question_endings` (optional): an alternative last assistant turn that offers options, plus terse `answers` to it
+- `pastes` (optional, agentic): pasted output (stack trace, CI log, data) with no instruction
+- `lures` (optional): continuations written to reuse the vocabulary of the `targets` sessions
 
 `build_cases.py` creates:
 
@@ -21,6 +24,19 @@ Each session file defines:
 | non_sequitur | another session's continuation | flag |
 
 Difficulty of a non-sequitur = relationship between target and donor sessions: same repo (hard), same domain (medium), different domain (easy). Hard pairs use every donor message because they are the scarcest and most realistic tier.
+
+### Probe families
+
+Plain swaps turned out to be easy to game: a 10-line rule (flag low word overlap with the history, unless the message says "unrelated") scored 88% on them with no model at all. Every probe was a wordy instruction and every control reused the session's words. Three families target that, each with a twin control that uses the same probe text:
+
+| family (`type`) | non-sequitur | twin control | why |
+|---|---|---|---|
+| `swap` | another session's continuation | own continuations and switches | the original cases |
+| `unasked_answer` | "the second one" after the original ending, which offered nothing | same answer after the question ending | no foreign words at all; the only clue is that no question was asked. Minimal pair: the histories differ only in the last assistant turn (difficulty `same_session`) |
+| `paste` | another project's stack trace / log / data, no instruction | the paste in its own session | agents tend to start debugging pasted errors at once; sent to agentic sessions only |
+| `same_words` | a lure sent to the session whose vocabulary it reuses | the lure in its own session | every word fits the target, but the thing it describes doesn't exist there |
+
+Checked against the word-overlap rule above: it catches 0% of `same_words`, can't separate `unasked_answer` pairs (flags 80% of non-sequiturs and 70% of controls), and catches 67% of `paste` (file paths give some away).
 
 The history is scripted, so "thinking off while building the conversation" (the original spec) is automatic. Only the probe response is generated, with thinking off or on.
 
@@ -46,7 +62,7 @@ Reading the results:
 
 ## Known limitations / open questions
 
-- **Small synthetic dataset.** 5 sessions, 88 cases. Good for pipeline validation, not for conclusions.
+- **Small synthetic dataset.** 5 sessions, 134 cases (88 swaps, 46 in the newer families). Good for pipeline validation, not for conclusions.
 - **Switch controls are all explicitly marked** ("Unrelated, but..."). A model could learn "proceed only with a marker." Add unmarked but legitimate switches.
 - **Hard-tier labels are debatable.** "Add an Export CSV button" sent to the tax branch of the same repo *could* be intentional. The ideal behavior is still to check before editing the wrong branch, but humans may disagree. Consider a human-rated subset.
 - **Single step.** A model might call `grep` first and *then* notice. The current metric counts that as acting. A multi-step variant (simulated tool results, N steps) would measure "eventually noticed."
