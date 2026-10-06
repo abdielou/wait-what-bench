@@ -121,14 +121,15 @@ class MockProvider:
             "What did you mean?")
 
     def __init__(self):
-        # (first user message of the session, probe) -> expected. Keyed by session too, because the
-        # same probe text is a valid continuation in its own session and a non-sequitur elsewhere.
-        self.oracle_labels: dict[tuple[str, str], str] = {}
+        # (first user message, last assistant turn, probe) -> expected. The same probe text is valid
+        # in its own session and a non-sequitur elsewhere, and question-ending minimal pairs share a
+        # session and differ only in the last assistant turn.
+        self.oracle_labels: dict[tuple[str, str, str], str] = {}
 
     @staticmethod
-    def oracle_key(messages) -> tuple[str, str]:
+    def oracle_key(messages) -> tuple[str, str, str]:
         first_user = next(m["content"] for m in messages if m["role"] == "user")
-        return first_user, messages[-1]["content"]
+        return first_user, messages[-2].get("content") or "", messages[-1]["content"]
 
     def complete(self, model, messages, tools=None, thinking=None, temperature=None, max_tokens=0):
         probe = messages[-1]["content"]

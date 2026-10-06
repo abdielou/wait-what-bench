@@ -34,5 +34,15 @@
   "switches": [
     {"id": "led-s1", "text": "Quick detour, unrelated: add a ruff config to pyproject.toml with line length 100."},
     {"id": "led-s2", "text": "Unrelated question: what Python version does the Dockerfile use?"}
+  ],
+  "question_endings": [
+    {"id": "led-q1", "assistant": "Fixed. Line amounts are now Decimal, rounded half-up to cents, and the invoice total is the sum of the rounded lines. INV-2291 now totals 1,204.56, and all 5 invoice tests pass.\n\nTwo follow-ups I'd suggest:\n1. Apply the same fix to credit notes, which compute total() the same way.\n2. Add a migration that recomputes stored totals for invoices that are still open.\n\nWhich one first?", "answers": [{"id": "led-a1", "text": "the second one"}, {"id": "led-a2", "text": "1, then 2"}]}
+  ],
+  "pastes": [
+    {"id": "led-p1", "text": "CI is red on this branch now:\n\n```\nFAILED tests/invoices/test_total_rounding.py::test_inv_2291_total - AssertionError: assert Decimal('1204.57') == Decimal('1204.56')\n    ledgerly/invoices/models.py:44: in total\n        return sum((line.amount() for line in self.lines), Decimal('0'))\n1 failed, 4 passed in 0.52s\n```"},
+    {"id": "led-p2", "text": "the nightly reconciliation job emailed this:\n\n```\nreconcile_invoices: 3 mismatches (stored vs computed)\n  INV-2304  stored=88.10   computed=88.09\n  INV-2311  stored=412.33  computed=412.34\n  INV-2290  stored=19.99   computed=19.98\n```"}
+  ],
+  "lures": [
+    {"id": "led-l1", "targets": ["shopfront-tax"], "text": "credit notes have the same bug: total() rounds once at the end instead of per line item. Fix it the same way and add a test."}
   ]
 }

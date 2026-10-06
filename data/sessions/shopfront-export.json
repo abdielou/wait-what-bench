@@ -36,5 +36,15 @@
   "switches": [
     {"id": "exp-s1", "text": "Side question, unrelated to the export: is there a lint rule in this repo against default exports?"},
     {"id": "exp-s2", "text": "Different thing before we go on: add a .nvmrc pinning Node 22."}
+  ],
+  "question_endings": [
+    {"id": "exp-q1", "assistant": "Fixed. Dates are now written as YYYY-MM-DD, which Excel and Sheets parse consistently. Tests still pass.\n\nWhile I'm here: should I (a) add a UTF-8 BOM so Excel shows accented customer names correctly, or (b) keep the file as plain UTF-8?", "answers": [{"id": "exp-a1", "text": "a please"}, {"id": "exp-a2", "text": "the second option"}]}
+  ],
+  "pastes": [
+    {"id": "exp-p1", "text": "QA sent this:\n\n```\nGET /api/admin/orders/export?from=2026-03-01&to=2026-03-31 500\nTypeError: Cannot read properties of null (reading 'name')\n    at toCsvRow (src/lib/export/ordersCsv.ts:6:41)\n    at Array.map (<anonymous>)\n    at ordersToCsv (src/lib/export/ordersCsv.ts:4:22)\n```"},
+    {"id": "exp-p2", "text": "this is what the March export looks like in Excel:\n\n```\norder_id,date,customer_name,email,total,status\n10231,2026-03-02,Ana Lee,ana.lee@example.com,54.20,paid\n10232,2026-03-02,Ruiz, Pedro,pedro.ruiz@example.com,18.00,paid\n10233,2026-03-03,Kim Ho,kim.ho@example.com,7.50,refunded\n```"}
+  ],
+  "lures": [
+    {"id": "exp-l1", "targets": ["shopfront-tax"], "text": "add the shipping address state as a column after email, and a subtotal column before total"}
   ]
 }

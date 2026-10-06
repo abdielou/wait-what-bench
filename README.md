@@ -11,6 +11,8 @@ This benchmark measures whether the model notices. Each case is a scripted sessi
 
 The same probe text is a valid continuation in its own session and a non-sequitur everywhere else, so a model can't pass by judging the message alone. It has to compare the message with the session.
 
+Besides plain swaps there are three harder probe families, each paired with a control that uses the same text: **unasked answers** ("the second one" when no options were offered), **pastes** (another project's stack trace with no instruction), and **same words** (messages that reuse the session's vocabulary for something that doesn't exist there). See `docs/DESIGN.md`.
+
 ## Metrics
 
 | metric | meaning |
@@ -52,7 +54,7 @@ Re-running with the same `--out` resumes and retries errors. Use `--limit 5` for
 ## Layout
 
 ```
-data/sessions/*.json   scripted sessions + their native continuations and switches
+data/sessions/*.json   scripted sessions + their native probes (continuations, switches, question endings, pastes, lures)
 data/cases.jsonl       generated cases (python -m wwb.build_cases)
 wwb/build_cases.py     message-swap generator, difficulty tiers
 wwb/prompts.py         system prompt variants
@@ -67,4 +69,4 @@ CLAUDE.md              project context for coding agents
 
 ## Adding sessions
 
-Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere.
+Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere. Optional fields add the harder families: `question_endings` (end with options; answers should be meaningless without them, like "the second one"), `pastes` (agentic only) and `lures` (name the `targets` whose vocabulary they reuse).

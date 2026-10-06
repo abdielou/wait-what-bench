@@ -38,5 +38,15 @@
   "switches": [
     {"id": "tax-s1", "text": "Unrelated, but while you're in this repo: what does the prebuild script in package.json do?"},
     {"id": "tax-s2", "text": "Separate quick task before we continue: bump typescript to the latest 5.x and check the build still passes."}
+  ],
+  "question_endings": [
+    {"id": "tax-q1", "assistant": "Done. The checkout summary now shows a \"Sales tax\" row under Subtotal, based on the shipping state, and the typecheck is clean.\n\nOne choice before I go further: should the row (a) include the rate, like \"Sales tax (7.25%)\", or (b) stay as just \"Sales tax\"?", "answers": [{"id": "tax-a1", "text": "b"}, {"id": "tax-a2", "text": "go with a"}]}
+  ],
+  "pastes": [
+    {"id": "tax-p1", "text": "getting this now:\n\n```\n FAIL  src/lib/tax.test.ts\n  ● calculateTax › rounds half up per line item\n\n    expect(received).toBe(expected)\n\n    Expected: 0.73\n    Received: 0.72\n\n      19 |   const items = [{ sku: 'A', price: 10, qty: 1, taxable: true }];\n    > 20 |   expect(calculateTax(items, 'CA')).toBe(0.73);\n\nTests: 1 failed, 3 passed, 4 total\n```"},
+    {"id": "tax-p2", "text": "build is failing:\n\n```\nsrc/app/checkout/Summary.tsx:34:38 - error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.\n\n34   const tax = calculateTax(cart.items, address.state);\n                                          ~~~~~~~~~~~~~\n\nFound 1 error in src/app/checkout/Summary.tsx:34\n```"}
+  ],
+  "lures": [
+    {"id": "tax-l1", "targets": ["ledgerly-rounding"], "text": "rounding per line item works now, but total() still sums float amounts. Compute the total in integer cents too and add a regression test."}
   ]
 }

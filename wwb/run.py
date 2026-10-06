@@ -20,7 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .data import CASES_PATH, load_cases, load_sessions, to_openai_messages
+from .data import CASES_PATH, case_history, load_cases, load_sessions, to_openai_messages
 from .judge import jev_label, llm_label, regex_label
 from .prompts import VARIANTS, system_prompt
 from .providers import MockProvider, get_provider
@@ -30,10 +30,10 @@ from .tools import TOOLS
 DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
 
 
-def build_messages(session, variant: str, probe: str) -> list[dict]:
+def build_messages(session, variant: str, case) -> list[dict]:
     msgs = [{"role": "system", "content": system_prompt(session.kind, variant, session.env)}]
-    msgs += to_openai_messages(session.history, session.id)
-    msgs.append({"role": "user", "content": probe})
+    msgs += to_openai_messages(case_history(session, case), session.id)
+    msgs.append({"role": "user", "content": case.probe})
     return msgs
 
 
@@ -99,7 +99,7 @@ def main(argv=None):
     provider = get_provider(args.provider)
     if isinstance(provider, MockProvider):
         provider.oracle_labels = {
-            (sessions[c.session_id].history[0]["content"], c.probe): c.expected for c in cases
+            MockProvider.oracle_key(build_messages(sessions[c.session_id], "neutral", c)): c.expected for c in cases
         }
 
     out = args.out or Path("results") / f"run-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
@@ -122,7 +122,7 @@ def main(argv=None):
     def work(job):
         c, m, v, t, s = job
         sess = sessions[c.session_id]
-        msgs = build_messages(sess, v, c.probe)
+        msgs = build_messages(sess, v, c)
         tools = TOOLS if sess.kind == "agentic" else None
         r = provider.complete(m, msgs, tools=tools, thinking=t if args.provider != "mock" else None,
                               temperature=args.temperature)
@@ -137,6 +137,7 @@ def main(argv=None):
         return {
             "case_id": c.id, "session_id": c.session_id, "kind": sess.kind,
             "category": c.category, "expected": c.expected, "difficulty": c.difficulty,
+            "type": c.type, "ending_id": c.ending_id,
             "donor_session_id": c.donor_session_id,
             "model": m, "variant": v, "thinking": t, "sample": s,
             "probe": c.probe, "response_text": r.text, "tool_calls": r.tool_calls,

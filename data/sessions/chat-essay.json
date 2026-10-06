@@ -24,5 +24,8 @@
   "switches": [
     {"id": "ess-s1", "text": "Unrelated question: what's the keyboard shortcut for strikethrough in Google Docs?"},
     {"id": "ess-s2", "text": "Different topic for a sec: when do I use 'affect' vs 'effect'?"}
+  ],
+  "question_endings": [
+    {"id": "ess-q1", "assistant": "Done, that's the new section 2. For the conclusion I see two directions:\n\n1. End on the one-month experiment as a call to action.\n2. Come back to the calendar image from the intro.\n\nWhich do you prefer?", "answers": [{"id": "ess-a1", "text": "the first"}, {"id": "ess-a2", "text": "2, but keep it short"}]}
   ]
 }
