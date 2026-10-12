@@ -93,3 +93,38 @@ def test_finds_app_config_transcripts_on_windows(tmp_path, monkeypatch):
     hit, = json.loads((out / "index.json").read_text())
     assert hit["project"] == "shopfront" and hit["misdirected"] == "make the tax rate 8% for NY"
     assert str(config / "projects") in (out / "index.md").read_text()
+
+
+def test_skips_stop_and_counts_shell_changes(tmp_path):
+    def bash(command):
+        return line("assistant", [{"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": command}}])
+    rows = [
+        line("user", "switch the export to CSV and drop the PDF option"),  # went to the wrong session
+        bash("git log --oneline main..HEAD | head; sed -n 1,20p src/export.rs"),
+        {**bash("python - <<'EOF'\ns = open('export.rs', encoding='utf-8').read()\nif len(s) > 20:\n"
+                "    open('export.rs', 'w', encoding='utf-8').write(s[:20])\nEOF"), "cwd": "/Users/me/code/shopfront/src"},
+        bash("cargo fmt --all --check && grep -n pdf export.rs > /dev/null"),
+        line("user", "STOP"),
+        line("assistant", [{"type": "text", "text": "Stopped."}]),
+        line("user", "revert that please, it was meant for the other session"),
+    ]
+    project = tmp_path / "projects" / "-Users-me-code-shopfront"
+    project.mkdir(parents=True)
+    (project / f"{SESSION}.jsonl").write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+    out = tmp_path / "out"
+    assert fm.main(["--root", str(tmp_path / "projects"), "--out", str(out)]) == 0
+    hit, = json.loads((out / "index.json").read_text())
+    assert hit["misdirected"] == "switch the export to CSV and drop the PDF option"  # not "STOP"
+    assert len(hit["tool_calls"]) == 3 and len(hit["changing_commands"]) == 1 and hit["project"] == "shopfront"
+
+
+def test_changing_commands():
+    changes = ["sed -i 's/a/b/' src/export.rs && grep -n b src/export.rs", "cargo fmt --all && cargo fmt --all --check",
+               "git commit -am wip && git push", "cd build && rm -rf out", "echo hi > notes.txt", "npm install lodash",
+               "Remove-Item old.txt", "cat <<'EOF' > conf.toml\nkey = 1\nEOF", "gh pr create --fill", "git stash"]
+    reads = ["sed -n 10,20p src/export.rs | cat -A", "git status --short | grep -v '^??'", "git stash list",
+             "git show --stat 3f9c2e1", "cargo fmt --all --check && echo fmt-ok", "grep -rn foo . 2>/dev/null",
+             "cargo build --workspace 2>&1 | tail -2", "python - <<'EOF'\nimport json\nprint(len([1, 2]) > 1)\nEOF",
+             "grep -n \"rm \" Makefile", "git log --format='%h -> %s' | head", "npm test", "ls -la; git tag -l"]
+    assert [c for c in changes if not fm.changing(c)] == []
+    assert [c for c in reads if fm.changing(c)] == []

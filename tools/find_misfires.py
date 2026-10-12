@@ -37,12 +37,32 @@ import zipfile
 from pathlib import Path
 
 DEFAULT_PATTERNS = [
-    r"\bwrong\s+(?:agent|session|window|tab|chat|thread|terminal|claude|convo|conversation|pane|instance|project|repo)\b",
+    r"\bwrong\s+(?:agent|session|window|tab|chat|thread|terminal|claude|convo|conversation|pane|instance|project|repo|"
+    r"paste|prompt|message)\b",
+    r"\b(?:for|to)\s+(?:the\s+)?other\s+(?:agent|session|window|tab|chat|thread|terminal|claude|instance|project|repo)\b",
     r"\b(?:not|wasn'?t|isn'?t|was\s+not|is\s+not)\s+(?:meant\s+)?for\s+you\b",
     r"\bmeant\s+(?:it\s+|that\s+|this\s+)?for\s+(?:another|a\s+different|the\s+other)\b",
     r"\b(?:sent|typed|pasted|put)\s+(?:that|this|it)\s+(?:in|into|to)\s+the\s+wrong\b",
 ]
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit"}
+
+# Short messages that steer the running turn. When one sits between a message and your correction
+# ("STOP", "try again"), the misdirected message is the one before it.
+_CONTROL = re.compile(r"^\W*(?:stop|wait|hold on|hold up|try again|retry|continue|keep going)\W*$", re.I)
+
+# Shell commands that change files or git state. A rough check: reads like ls, grep, sed -n, git diff
+# or cargo fmt --check don't match. Real sessions edit with sed -i and python scripts as often as
+# with the Edit tool.
+_CHANGES = re.compile(
+    r"\bsed\s+(?:-[a-z]+\s+)*(?:-[a-z]*i|--in-place)|\bgit\s+(?:commit|push|checkout|switch|reset|restore|merge|"
+    r"rebase|revert|cherry-pick|apply|am|rm|mv|clean|stash(?!\s+(?:list|show))|tag\s+(?!-l\b|--list\b)[\w.-]|"
+    r"branch\s+-[dmc]\b|worktree\s+(?:add|remove))\b|(?:^|[;&|(]\s*)(?:rm|mv|cp|mkdir|touch|chmod|truncate|patch|tee)\s"
+    r"|\b(?:npm|pnpm|yarn|bun)\s+(?:install|i|add|remove|uninstall|update)\b|\bpip3?\s+install\b"
+    r"|\bcargo\s+fmt\b(?![^;&|\n]*--check)|\s--(?:write|fix)\b|\bgh\s+(?:pr|issue|release)\s+(?:create|merge|close|"
+    r"edit|comment|delete)\b|\b(?:Set-Content|Add-Content|Out-File|Remove-Item|New-Item|Move-Item|Copy-Item|Rename-Item)\b"
+    r"|(?<![0-9&=>-])>>?\s*(?!/dev/null|&)[\w./~\"'$]", re.I)
+_WRITES = re.compile(r"\b(?:write_text|write_bytes)\(|\bopen\([^)\n]*,\s*['\"][wax]|\bwriteFileSync\(")
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n.*?^\s*\2\s*$", re.S | re.M)
 
 # What the harness puts into user messages, as opposed to what you typed.
 _ARTIFACTS = re.compile(r"<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|"
@@ -129,6 +149,13 @@ def tool_summary(block: dict) -> str:
     return f"{name} {detail[:120]}".strip()
 
 
+def changing(command: str) -> bool:
+    """Whether a shell command changes something. Heredoc scripts count when they write a file, not
+    for a > comparison inside them."""
+    outside = _HEREDOC.sub(lambda m: m.group(3), command)
+    return bool(_CHANGES.search(outside) or _WRITES.search(command))
+
+
 def short(text: str, n: int) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[:n - 3] + "..."
@@ -178,8 +205,9 @@ def find_hits(lines: list, patterns: list) -> list:
             return None
         return next((m for p in patterns for m in [p.search(text)] if m), None)
 
-    def message(j):  # something you typed that isn't itself a correction
-        return typed_text(lines[j]) is not None and not is_interrupt(lines[j]) and not correction(lines[j])
+    def message(j):  # something you typed that isn't itself a correction, nor a "STOP" or "try again"
+        text = typed_text(lines[j])
+        return text is not None and not is_interrupt(lines[j]) and not correction(lines[j]) and not _CONTROL.match(text)
 
     hits, seen = [], set()
     for i, line in enumerate(lines):
@@ -196,7 +224,7 @@ def find_hits(lines: list, patterns: list) -> list:
 
 def what_happened(lines: list, start: int, end: int) -> dict:
     """What the assistant did between the misdirected message and your correction."""
-    tools, texts, edited, interrupted = [], [], [], False
+    tools, texts, edited, commands, interrupted = [], [], [], [], False
     for line in lines[start + 1:end]:
         if is_interrupt(line):
             interrupted = True
@@ -205,12 +233,15 @@ def what_happened(lines: list, start: int, end: int) -> dict:
         for b in blocks(line):
             if b.get("type") == "tool_use":
                 tools.append(tool_summary(b))
+                args = b.get("input") or {}
                 if b.get("name") in EDIT_TOOLS:
-                    args = b.get("input") or {}
                     edited.append(str(args.get("file_path") or args.get("notebook_path") or "?"))
+                elif isinstance(args.get("command"), str) and changing(args["command"]):
+                    commands.append(tool_summary(b))
             elif b.get("type") == "text" and b.get("text", "").strip():
                 texts.append(b["text"].strip())
-    return {"tool_calls": tools, "edited_files": edited, "interrupted": interrupted, "assistant_text": texts}
+    return {"tool_calls": tools, "edited_files": edited, "changing_commands": commands, "interrupted": interrupted,
+            "assistant_text": texts}
 
 
 def default_roots() -> list:
@@ -279,11 +310,12 @@ def main(argv=None) -> int:
                 while first > 0 and is_compaction(lines[first - 1]):
                     first -= 1
             meta = lines[focus] if isinstance(lines[focus], dict) else {}
-            project = re.split(r"[\\/]", str(meta.get("cwd") or path.parent.name).rstrip("\\/"))[-1]  # Windows or POSIX cwd
+            start = next((x["cwd"] for x in lines if isinstance(x, dict) and x.get("cwd")), None)  # cwd moves with cd
+            project = re.split(r"[\\/]", str(start or path.parent.name).rstrip("\\/"))[-1]  # Windows or POSIX path
             session = str(meta.get("sessionId") or path.stem)
             name = f"{n:02d}-{slug(project)}-{session[:8]}"
             did = what_happened(lines, prev, hit) if prev is not None else {
-                "tool_calls": [], "edited_files": [], "interrupted": False, "assistant_text": []}
+                "tool_calls": [], "edited_files": [], "changing_commands": [], "interrupted": False, "assistant_text": []}
             entry = {
                 "n": n, "file": str(path), "lines": [first, hit], "session_id": session, "project": project,
                 "cwd": meta.get("cwd"), "branch": meta.get("gitBranch"), "when": (lines[hit] or {}).get("timestamp"),
@@ -305,7 +337,8 @@ def main(argv=None) -> int:
                   f"- your correction: \"{short(entry['correction'] or '', 300)}\"",
                   f"- the message that probably went to the wrong place: \"{short(entry['misdirected'] or '?', 300)}\"",
                   f"- before you caught it: {len(did['tool_calls'])} tool call(s), "
-                  f"{len(did['edited_files'])} file edit(s){', you interrupted it' if did['interrupted'] else ''}", ""]
+                  f"{len(did['edited_files'])} file edit(s), {len(did['changing_commands'])} command(s) that change files "
+                  f"or git{', you interrupted it' if did['interrupted'] else ''}", ""]
             lo = max(first, focus - args.context)
             md += ["## Before", ""] + [x for line in lines[lo:focus] for x in render(redact(line), 400)]
             md += ["", "## The message that probably went to the wrong place", ""] + render(redact(lines[focus]), 2000)
@@ -314,15 +347,17 @@ def main(argv=None) -> int:
                 md += [x for line in lines[prev + 1:hit + 1] for x in render(redact(line), 600)]
             (out / f"{name}.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
-    acted = [e for e in index if e["edited_files"]]
+    acted = [e for e in index if e["edited_files"] or e["changing_commands"]]
     scanned = "; ".join(f"{r} ({len(found[r])})" for r in roots)
     summary = ["# Misfires", "", f"Scanned {len(files)} transcripts in {scanned}.", "",
                f"Found {len(index)} correction(s). "
-               f"In {len(acted)} of them the assistant had already edited files before you caught it.", "",
+               f"In {len(acted)} of them the assistant had already changed something (file edits, or commands that "
+               "change files or git) before you caught it.", "",
                "| # | when | project | you said | message that probably went to the wrong place | before you caught it |",
                "|---|---|---|---|---|---|"]
     for e in index:
-        did = f"{len(e['tool_calls'])} tool calls, {len(e['edited_files'])} edits" + (", interrupted" if e["interrupted"] else "")
+        did = (f"{len(e['tool_calls'])} tool calls, {len(e['edited_files'])} edits, {len(e['changing_commands'])} changing "
+               "commands" + (", interrupted" if e["interrupted"] else ""))
         cell = lambda s: short(s or "?", 90).replace("|", "\\|")  # noqa: E731
         summary.append(f"| {e['n']} | {(e['when'] or '')[:16]} | {e['project']} | {cell(e['correction'])} | "
                        f"{cell(e['misdirected'])} | {did} |")
@@ -338,7 +373,7 @@ def main(argv=None) -> int:
         print(f"  {len(found[r]):>6}  {r}")
     if unreadable:
         print(f"  (could not read {unreadable} of them)")
-    print(f"Found {len(index)} correction(s); the assistant had edited files before you caught it in {len(acted)}.")
+    print(f"Found {len(index)} correction(s); the assistant had changed something before you caught it in {len(acted)}.")
     for e in index[:20]:
         print(f"  {e['n']:>2}. {(e['when'] or '')[:10]}  {e['project'][:24]:<24}  \"{short(e['correction'] or '', 60)}\"")
     if len(index) > 20:

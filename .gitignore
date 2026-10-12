@@ -5,3 +5,5 @@ results/
 .env
 *.egg-info/
 build/
+wwb-misfires/
+wwb-misfires.zip

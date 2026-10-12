@@ -82,7 +82,7 @@ CLAUDE.md              project context for coding agents
 
 ## Real misfires from your own sessions
 
-`tools/find_misfires.py` scans your local Claude Code transcripts (`~/.claude/projects`, `$CLAUDE_CONFIG_DIR`, and on Windows any app's Claude Code config folders in `%APPDATA%\<app>\claude-config`; `--root` points it elsewhere) for corrections like "wrong agent" or "wrong session". For each one it writes the message that probably went to the wrong place, what the assistant did before you caught it, and the transcript up to that point, with secrets redacted. It needs only Python 3.8+ and never changes your transcripts:
+`tools/find_misfires.py` scans your local Claude Code transcripts (`~/.claude/projects`, `$CLAUDE_CONFIG_DIR`, and on Windows any app's Claude Code config folders in `%APPDATA%\<app>\claude-config`; `--root` points it elsewhere) for corrections like "wrong agent" or "wrong session". For each one it writes the message that probably went to the wrong place, what the assistant did before you caught it (file edits, and commands that change files or git), and the transcript up to that point, with secrets redacted. It needs only Python 3.8+ and never changes your transcripts:
 
 ```bash
 python3 tools/find_misfires.py                          # writes wwb-misfires/ and wwb-misfires.zip
