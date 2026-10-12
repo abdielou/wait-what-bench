@@ -74,3 +74,22 @@ def test_full_dump_and_redaction():
     assert fm.redact("API_KEY=abcd1234efgh5678") == "API_KEY=[REDACTED]"
     assert fm.redact("API_KEY=process.env.API_KEY") == "API_KEY=process.env.API_KEY"  # code, not a secret
     assert fm.redact({"type": "image", "source": {"data": "A" * 800}})["source"]["data"] == "[image removed]"
+
+
+def test_finds_app_config_transcripts_on_windows(tmp_path, monkeypatch):
+    appdata = tmp_path / "AppData" / "Roaming"
+    config = appdata / "someapp" / "claude-config" / "0123456789abcdef"
+    project = config / "projects" / "C--Users-me-code-shopfront"
+    project.mkdir(parents=True)
+    rows = [{**x, "cwd": "C:\\Users\\me\\code\\shopfront"} for x in transcript()]
+    (project / f"{SESSION}.jsonl").write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # no ~/.claude here
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))  # the same folder again: scanned once
+    assert fm.default_roots() == [config / "projects"]
+
+    out = tmp_path / "wwb-misfires"
+    assert fm.main(["--out", str(out)]) == 0
+    hit, = json.loads((out / "index.json").read_text())
+    assert hit["project"] == "shopfront" and hit["misdirected"] == "make the tax rate 8% for NY"
+    assert str(config / "projects") in (out / "index.md").read_text()

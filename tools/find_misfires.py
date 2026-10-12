@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Find Claude Code sessions where a message went to the wrong session, and dump them for wait-what-bench.
 
-Scans your local Claude Code transcripts (~/.claude/projects/**/*.jsonl) for messages where you
-said something like "wrong agent" or "wrong session". For each one it writes:
+Scans your local Claude Code transcripts (**/*.jsonl in every projects folder it finds: ~/.claude,
+$CLAUDE_CONFIG_DIR, and on Windows the Claude Code config folders apps keep in
+%APPDATA%\\<app>\\claude-config\\<id>) for messages where you said something like "wrong agent" or
+"wrong session". For each one it writes:
 
   wwb-misfires/index.md      every hit: when, which project, what you said, the message that
                              probably went to the wrong place, and what the assistant did before
@@ -17,10 +19,10 @@ UPPER_CASE *_KEY= / *_TOKEN= / *_SECRET= / *_PASSWORD= assignments) is replaced 
 in every output file, and pasted images are dropped. The files still contain code and output
 from your projects, so skim the .md files before uploading.
 
-Usage:
+Usage (on Windows, type py instead of python3):
   python3 find_misfires.py
   python3 find_misfires.py --pattern "oops,? not you"   # add phrases you use (regex, case-insensitive)
-  python3 find_misfires.py --root ~/.claude/projects --out wwb-misfires
+  python3 find_misfires.py --root PATH --root PATH2     # only these transcripts folders
 
 Standard library only, Python 3.8 or later. Reads transcripts, never changes them.
 """
@@ -211,35 +213,54 @@ def what_happened(lines: list, start: int, end: int) -> dict:
     return {"tool_calls": tools, "edited_files": edited, "interrupted": interrupted, "assistant_text": texts}
 
 
+def default_roots() -> list:
+    """Every transcripts folder on this machine, each once."""
+    configs = [Path.home() / ".claude"]
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        configs.append(Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser())
+    if os.environ.get("APPDATA"):  # apps that run Claude Code may give each config a folder here
+        configs += sorted(Path(os.environ["APPDATA"]).glob("*/claude-config/*"))
+    roots = []
+    for config in configs:
+        projects = config / "projects"
+        if projects.is_dir() and projects.resolve() not in [r.resolve() for r in roots]:
+            roots.append(projects)
+    return roots
+
+
 def slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-")[:40] or "session"
 
 
 def main(argv=None) -> int:
-    default_root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser() / "projects"
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--root", type=Path, default=default_root, help=f"transcripts folder (default {default_root})")
+    ap.add_argument("--root", type=Path, action="append", help="transcripts folder, repeat for several "
+                    "(default: every one found, see above)")
     ap.add_argument("--out", type=Path, default=Path("wwb-misfires"), help="output folder (default ./wwb-misfires)")
     ap.add_argument("--pattern", action="append", default=[], help="extra phrase to look for (regex, case-insensitive)")
     ap.add_argument("--context", type=int, default=40, help="transcript lines shown before each misdirected message")
     ap.add_argument("--from-start", action="store_true", help="dump each transcript from the start, not the last compaction")
     args = ap.parse_args(argv)
 
-    root = args.root.expanduser()
-    if not root.is_dir():
-        print(f"No transcripts folder at {root}. Pass --root to point at it.", file=sys.stderr)
+    roots = list(dict.fromkeys(r.expanduser() for r in args.root)) if args.root else default_roots()
+    missing = [str(r) for r in roots if not r.is_dir()]
+    if missing or not roots:
+        where = ", ".join(missing) or "~/.claude/projects or %APPDATA%\\*\\claude-config\\*\\projects"
+        print(f"No transcripts folder at {where}. Pass --root to point at it.", file=sys.stderr)
         return 1
     patterns = [re.compile(p, re.I) for p in DEFAULT_PATTERNS + args.pattern]
     prefilter = re.compile("|".join(f"(?:{p.pattern})" for p in patterns), re.I)
-    files = sorted(root.rglob("*.jsonl"))
+    found = {r: sorted(r.rglob("*.jsonl")) for r in roots}
+    files = [path for r in roots for path in found[r]]
     out = args.out.expanduser()
     out.mkdir(parents=True, exist_ok=True)
 
-    index, n = [], 0
+    index, n, unreadable = [], 0, 0
     for path in files:
         try:
             raw = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError:  # e.g. a path longer than Windows allows
+            unreadable += 1
             continue
         if not prefilter.search(raw):
             continue
@@ -258,7 +279,7 @@ def main(argv=None) -> int:
                 while first > 0 and is_compaction(lines[first - 1]):
                     first -= 1
             meta = lines[focus] if isinstance(lines[focus], dict) else {}
-            project = Path(meta.get("cwd") or path.parent.name).name
+            project = re.split(r"[\\/]", str(meta.get("cwd") or path.parent.name).rstrip("\\/"))[-1]  # Windows or POSIX cwd
             session = str(meta.get("sessionId") or path.stem)
             name = f"{n:02d}-{slug(project)}-{session[:8]}"
             did = what_happened(lines, prev, hit) if prev is not None else {
@@ -294,8 +315,9 @@ def main(argv=None) -> int:
             (out / f"{name}.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
     acted = [e for e in index if e["edited_files"]]
-    summary = [f"# Misfires found in {root}", "",
-               f"Scanned {len(files)} transcripts. Found {len(index)} correction(s). "
+    scanned = "; ".join(f"{r} ({len(found[r])})" for r in roots)
+    summary = ["# Misfires", "", f"Scanned {len(files)} transcripts in {scanned}.", "",
+               f"Found {len(index)} correction(s). "
                f"In {len(acted)} of them the assistant had already edited files before you caught it.", "",
                "| # | when | project | you said | message that probably went to the wrong place | before you caught it |",
                "|---|---|---|---|---|---|"]
@@ -311,7 +333,11 @@ def main(argv=None) -> int:
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(out.iterdir()):
             z.write(f, f"{out.name}/{f.name}")
-    print(f"Scanned {len(files)} transcripts in {root}.")
+    print(f"Scanned {len(files)} transcripts:")
+    for r in roots:
+        print(f"  {len(found[r]):>6}  {r}")
+    if unreadable:
+        print(f"  (could not read {unreadable} of them)")
     print(f"Found {len(index)} correction(s); the assistant had edited files before you caught it in {len(acted)}.")
     for e in index[:20]:
         print(f"  {e['n']:>2}. {(e['when'] or '')[:10]}  {e['project'][:24]:<24}  \"{short(e['correction'] or '', 60)}\"")
@@ -322,4 +348,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):  # a console that can't show a character prints ? instead of crashing
+        sys.stdout.reconfigure(errors="replace")
     sys.exit(main())
