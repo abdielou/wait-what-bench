@@ -718,7 +718,7 @@ class Sandbox:
             self._denied = True
             return "", 126, cwd, f"permission denied: running inline code ({prog} {argv[1]}) isn't allowed in this workspace"
         handler = getattr(self, "_cmd_" + prog.replace("-", "_").replace(".", "_"), None) \
-            if re.fullmatch(r"[a-z][a-z0-9.-]*", prog) else None
+            if re.fullmatch(r"[a-z][a-z0-9._-]*", prog) else None
         if handler:
             out, code, err = handler(argv, cwd, stdin)
             return out, code, cwd, err
@@ -1317,6 +1317,13 @@ class Sandbox:
                 short, _, subject, _ = self.commits[0]
                 out = [f"{line:<{max(map(len, out)) + 1}} {short} {subject}" for line in out]
             return "\n".join(out), 0, ""
+        if sub == "merge-base":  # every branch points at HEAD
+            revs = [a for a in rest if not a.startswith("-")]
+            if any(self._commit(r) is None for r in revs):
+                return "", 128, f"fatal: Not a valid object name {next(r for r in revs if self._commit(r) is None)}"
+            if "--is-ancestor" in rest:
+                return "", 0, ""
+            return _full_hash(self.commits[0][0]), 0, ""
         if sub == "ls-tree":
             names = [a for a in rest if not a.startswith("-")]
             if not names or self._commit(names[0]) is None:
@@ -1677,6 +1684,30 @@ class Sandbox:
         """No database on this machine: clients can't connect (and the model can carry on)."""
         return "", 2, ('psql: error: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: '
                        "No such file or directory\n\tIs the server running locally and accepting connections on that socket?")
+
+    def _cmd_pg_lsclusters(self, argv, cwd, stdin):
+        return "", 127, "bash: pg_lsclusters: command not found"
+
+    _cmd_pg_ctl = _cmd_pg_ctlcluster = _cmd_pg_lsclusters
+
+    def _cmd_xxd(self, argv, cwd, stdin):
+        """Hex dump (also `hexdump -C`), enough to look at a file's first bytes."""
+        files = [a for a in argv[1:] if not a.startswith("-")]
+        got, errs = self._files_or_stdin(files[:1], cwd, stdin, argv[0])
+        data = (got[0][1] if got else "").encode()
+        lines = []
+        for off in range(0, len(data), 16):
+            chunk = data[off:off + 16]
+            text = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
+            if argv[0] == "hexdump":
+                hexes = " ".join(f"{b:02x}" for b in chunk)
+                lines.append(f"{off:08x}  {hexes:<47}  |{text}|")
+            else:
+                pairs = " ".join(chunk[i:i + 2].hex() for i in range(0, len(chunk), 2))
+                lines.append(f"{off:08x}: {pairs:<39}  {text}")
+        return "\n".join(lines), 1 if errs else 0, "\n".join(errs)
+
+    _cmd_hexdump = _cmd_xxd
 
     def _cmd_mysql(self, argv, cwd, stdin):
         return "", 1, "ERROR 2002 (HY000): Can't connect to local MySQL server through socket '/var/run/mysqld/mysqld.sock' (2)"

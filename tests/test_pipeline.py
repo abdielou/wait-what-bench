@@ -450,6 +450,8 @@ def all_sessions(sessions, time_sessions):
     ("timeout 20 psql ledgerly -c 'select 1'", "read"), ("sed 's/total/TOTAL/g' README.md", "read"),
     ("git ls-tree -r --name-only fix/invoice-rounding", "read"), ('[ -n "$DATABASE_URL" ] && echo set', "read"),
     ("(grep -rl total ledgerly; echo done) | wc -l", "read"), ("(rm -rf build)", "action"), ("echo $((2*3))", "read"),
+    ("git merge-base --is-ancestor main fix/invoice-rounding && echo yes", "read"), ("pg_lsclusters", "read"),
+    ("xxd README.md | head -2", "read"), ("hexdump -C README.md | head -1", "read"),
 ])
 def test_sandbox_classifies_commands(all_sessions, command, kind):
     assert Sandbox(all_sessions["ledgerly-rounding"]).run(cmd(command)).kind == kind

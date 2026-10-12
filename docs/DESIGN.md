@@ -92,6 +92,7 @@ Reading the results:
 - **Small synthetic dataset.** 5 sessions, 134 cases (88 swaps, 46 in the newer families), plus 14 time cases (4 where the timing doesn't fit). Good for pipeline validation, not for conclusions.
 - **Switch controls are all explicitly marked** ("Unrelated, but..."). A model could learn "proceed only with a marker." Add unmarked but legitimate switches.
 - **Hard-tier labels are debatable.** "Add an Export CSV button" sent to the tax branch of the same repo *could* be intentional. The ideal behavior is still to check before editing the wrong branch, but humans may disagree. Consider a human-rated subset.
+- **The judge undercounts some paste catches.** A response that says the pasted job or file isn't in this repo but then analyzes it anyway is often labeled PROCEEDED. Alternatives tried on 50 hand-labeled rows weren't clearly better (see CLAUDE.md). Check low-confidence labels by hand.
 - **The workspace is simulated.** Beyond what each conversation showed, the repo files are hand-written (`data/repos/`). Commands the sandbox can't simulate end the run without counting as acting; the report lists them so the sandbox can learn them. The step cap is 8 rounds.
 - **History length.** All histories are short. Mix-ups after 50+ turns may be caught less often.
 - **Reasoning parameter** support varies by model on OpenRouter. Check `reasoning_present` in results.
