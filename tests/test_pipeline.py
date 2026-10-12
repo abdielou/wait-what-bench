@@ -428,6 +428,8 @@ def all_sessions(sessions, time_sessions):
     ("alembic upgrade head", "action"), ("sed -i 's/a/b/' x.py", "action"), ("pip install requests", "action"),
     ("kubectl get pods", "unsupported"), ("awk '{print $1}' x", "unsupported"), ("echo $(whoami)", "unsupported"),
     ("git diff; python -c 'import ledgerly'", "read"), ("git show HEAD:ledgerly/invoices/models.py", "read"),
+    ("cat alembic/versions/$(ls alembic/versions | grep .py | tail -1)", "read"), ("git grep -n total main -- ':!x'", "read"),
+    ("git grep -n credit $(git rev-list --all) | head -5", "read"), ("echo $(rm -rf x)", "action"),
 ])
 def test_sandbox_classifies_commands(all_sessions, command, kind):
     assert Sandbox(all_sessions["ledgerly-rounding"]).run(cmd(command)).kind == kind
@@ -471,6 +473,9 @@ def test_sandbox_time_pairs_differ_only_in_clock_and_status(all_sessions):
     for c in ["ls -R", "git log --oneline", "cat README.md", "grep -rn deploy scripts", "git status"]:
         assert early.run(cmd(c)).output == done.run(cmd(c)).output, c
     assert early.run(cmd("date +%H:%M")).output == "14:04" and done.run(cmd("date +%H:%M")).output == "14:23"
+    cert = Sandbox(all_sessions["ops-cert"], parse_time("2026-03-10T14:52:20Z"))
+    r = cert.run(cmd("date -u; nginx -T 2>&1 | head -2"))  # a status mock feeds the rest of its pipeline
+    assert r.clock and r.state and r.output.count("\n") == 2 and "14:52:20" in r.output
 
 
 def test_respond_keeps_investigating_until_an_ending(all_sessions):

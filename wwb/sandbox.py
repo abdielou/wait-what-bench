@@ -413,12 +413,7 @@ class Sandbox:
         if "<<" in command:
             raise Action("heredoc") if re.search(r">\s*[^&\s/]", command) else Unsupported("heredoc")
 
-        def date_sub(m):
-            self._clock = True
-            return clock_output("date" + m.group(1), self.now) or ""
-        command = re.sub(r"\$\(\s*date\b([^()`]*)\)", date_sub, command)
-        if "$(" in command or "`" in command:
-            raise Unsupported("command substitution")
+        command = self._substitute(command)
         outs, code, cwd = [], 0, ""
         for op, pipeline in _split_chain(command):
             if (op == "&&" and code != 0) or (op == "||" and code == 0):
@@ -428,14 +423,35 @@ class Sandbox:
                 outs.append(out.rstrip("\n"))
         return "\n".join(outs), code
 
+    def _substitute(self, command: str) -> str:
+        """Run $(...) and `...` (read-only only) and splice in their output, innermost first."""
+        for _ in range(20):
+            start = command.rfind("$(")
+            if start >= 0:
+                end = command.find(")", start)
+                if end < 0:
+                    raise Unsupported("unbalanced $(")
+                inner, before, after = command[start + 2:end], command[:start], command[end + 1:]
+            elif command.count("`") >= 2:
+                a = command.find("`")
+                b = command.find("`", a + 1)
+                inner, before, after = command[a + 1:b], command[:a], command[b + 1:]
+            else:
+                return command
+            out, _ = self._shell(inner)
+            command = before + " ".join(out.split()) + after
+        raise Unsupported("command substitution")
+
     def _pipeline(self, segments: list[str], cwd: str) -> tuple[str, int, str]:
-        joined = " | ".join(segments)
+        stdin, start = None, 0
         for mock in self.session.mock_commands:  # declared status commands know about time
-            if re.search(mock["match"], joined):
+            hit = next((i for i in range(len(segments)) if re.search(mock["match"], " | ".join(segments[:i + 1]))), None)
+            if hit is not None:
                 self._state = True
-                return state_output(mock, self.now), 0, cwd
-        stdin, code, errs = None, 0, []
-        for seg in segments:
+                stdin, start = state_output(mock, self.now), hit + 1
+                break
+        code, errs = 0, []
+        for seg in segments[start:]:
             out, code, cwd, err = self._simple(seg, cwd, stdin)
             stdin = out
             if err:
@@ -994,9 +1010,14 @@ class Sandbox:
             return "\n".join(sorted(p for p in self.tracked if p in self.files)), 0, ""
         if sub == "remote":
             return (f"origin\t{self.remote} (fetch)\norigin\t{self.remote} (push)" if "-v" in rest else "origin"), 0, ""
-        if sub == "grep":
-            out, code, err = self._grep(["grep", "-rn"] + [a for a in rest if a != "-n"] + ["."], cwd, None)
+        if sub == "grep":  # revisions and pathspec magic are dropped: other branches' trees aren't modeled
+            hashes = {line.split()[0] for line in self.log}
+            keep = [a for a in rest if a not in ("-n", "--") and a not in self.branches and a not in hashes
+                    and not a.startswith(":") and not re.fullmatch(r"(HEAD|origin/\S+)([~^]\d*)*", a)]
+            out, code, err = self._grep(["grep", "-rn"] + keep + ["."], cwd, None)
             return re.sub(r"(?m)^\./", "", out), code, err
+        if sub == "rev-list":
+            return "\n".join(line.split()[0] for line in self.log), 0, ""
         if sub == "fetch":
             return "", 0, ""
         if sub in ("stash", "tag") and (not rest or rest == ["list"] or rest == ["-l"]):

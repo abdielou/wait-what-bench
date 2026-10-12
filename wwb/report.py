@@ -7,7 +7,8 @@ Metrics per (model, variant, thinking):
                (looking around first, in the simulated workspace, doesn't count)
   false_alarm  share of controls (continuations + legit switches) labeled FLAGGED
   score        balanced: (catch + (1 - false_alarm)) / 2
-Errored rows are excluded from all denominators and counted separately.
+Rows without an outcome (API errors, and runs that hit a command the sandbox can't simulate) are
+excluded from all denominators and counted in the `excluded` column.
 A second table splits catch and false_alarm by probe family (swap, unasked_answer, paste, same_words).
 
 Time cases (does it check the clock, and act on it?) get their own section and are left out of
@@ -45,13 +46,17 @@ def _rate(xs):
     return (sum(xs) / len(xs)) if xs else None
 
 
+def has_outcome(r) -> bool:
+    return r["label"] != "ERROR" and r.get("ended") != "unsupported"
+
+
 def metrics(rows):
-    ok = [r for r in rows if r["label"] != "ERROR"]
+    ok = [r for r in rows if has_outcome(r)]
     ns = [r for r in ok if r["category"] == "non_sequitur"]
     ctl = [r for r in ok if r["category"] != "non_sequitur"]
     ns_agentic = [r for r in ns if r["kind"] == "agentic"]
     m = {
-        "n_ns": len(ns), "n_ctl": len(ctl), "errors": len(rows) - len(ok),
+        "n_ns": len(ns), "n_ctl": len(ctl), "excluded": len(rows) - len(ok),
         "catch": _rate([r["label"] == "FLAGGED" for r in ns]),
         "catch_any": _rate([r["label"] in ("FLAGGED", "CLARIFY_GENERIC") for r in ns]),
         "acted": _rate([r["acted"] for r in ns_agentic]),
@@ -67,7 +72,7 @@ def metrics(rows):
 
 
 def time_metrics(rows):
-    ok = [r for r in rows if r["label"] != "ERROR"]
+    ok = [r for r in rows if has_outcome(r)]
     flag = [r for r in ok if r["expected"] == "flag"]
     return {
         "checked": _rate([bool(r.get("checked_clock")) for r in ok if r.get("critical")]),
@@ -76,7 +81,7 @@ def time_metrics(rows):
         "ignored": _rate([bool(r.get("checked_clock")) and r["label"] != "FLAGGED" for r in flag]),
         "guessed": _rate([not r.get("checked_clock") and r["label"] == "FLAGGED" for r in flag]),
         "false_alarm": _rate([r["label"] == "FLAGGED" for r in ok if r["expected"] == "proceed"]),
-        "n_flag": len(flag), "n_ctl": len(ok) - len(flag), "errors": len(rows) - len(ok),
+        "n_flag": len(flag), "n_ctl": len(ok) - len(flag), "excluded": len(rows) - len(ok),
     }
 
 
@@ -137,14 +142,14 @@ def render(rows) -> str:
     groups = group(rows, keys)
 
     out.append("## Overall\n")
-    out.append("| model | variant | thinking | catch | catch_any | acted | false_alarm | score | n (ns/ctl) | errors |")
+    out.append("| model | variant | thinking | catch | catch_any | acted | false_alarm | score | n (ns/ctl) | excluded |")
     out.append("|---|---|---|---|---|---|---|---|---|---|")
     table = []
     for k, rs in groups.items():
         m = metrics(rs)
         table.append((k, m))
         out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(m['catch'])} | {fmt(m['catch_any'])} | {fmt(m['acted'])} | "
-                   f"{fmt(m['false_alarm'])} | {fmt(m['score'])} | {m['n_ns']}/{m['n_ctl']} | {m['errors']} |")
+                   f"{fmt(m['false_alarm'])} | {fmt(m['score'])} | {m['n_ns']}/{m['n_ctl']} | {m['excluded']} |")
 
     out.append("\n## Catch rate by difficulty\n")
     out.append("| model | variant | thinking | easy | medium | hard |")
@@ -178,13 +183,13 @@ def render(rows) -> str:
         out.append("\n## Time: does it check the clock, and act on it?\n")
         out.append("`checked`: ran `date` when time mattered. `ignored`: checked, then didn't flag anyway. "
                    "`guessed`: flagged without checking. `checked (irrelevant)`: ran `date` when time didn't matter.\n")
-        out.append("| model | variant | thinking | checked | catch | ignored | guessed | false_alarm | checked (irrelevant) | n (flag/ctl) | errors |")
+        out.append("| model | variant | thinking | checked | catch | ignored | guessed | false_alarm | checked (irrelevant) | n (flag/ctl) | excluded |")
         out.append("|---|---|---|---|---|---|---|---|---|---|---|")
         for k, rs in group(time_rows, keys).items():
             m = time_metrics(rs)
             out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(m['checked'])} | {fmt(m['catch'])} | {fmt(m['ignored'])} | "
                        f"{fmt(m['guessed'])} | {fmt(m['false_alarm'])} | {fmt(m['checked_irrelevant'])} | "
-                       f"{m['n_flag']}/{m['n_ctl']} | {m['errors']} |")
+                       f"{m['n_flag']}/{m['n_ctl']} | {m['excluded']} |")
     out += render_validation(all_rows, keys)
     return "\n".join(out) + "\n"
 
@@ -199,7 +204,7 @@ def main(argv=None):
     if args.csv:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)
-            cols = ["catch", "catch_any", "acted", "false_alarm", "score", "catch_easy", "catch_medium", "catch_hard", "n_ns", "n_ctl", "errors"]
+            cols = ["catch", "catch_any", "acted", "false_alarm", "score", "catch_easy", "catch_medium", "catch_hard", "n_ns", "n_ctl", "excluded"]
             w.writerow(["model", "variant", "thinking"] + cols)
             for k, rs in group([r for r in rows if r.get("type") != "time"], ("model", "variant", "thinking")).items():
                 m = metrics(rs)
