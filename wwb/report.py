@@ -94,13 +94,15 @@ def judge_confidence(r) -> float | None:
 
 def render_validation(rows, keys) -> list[str]:
     out = ["\n## Validation: how runs ended\n",
-           "| model | variant | thinking | answer | action | step_cap | unsupported | error | refusal | avg steps |",
-           "|---|---|---|---|---|---|---|---|---|---|"]
+           "| model | variant | thinking | answer | action | step_cap | unsupported | error | refusal | avg steps | tokens in/out |",
+           "|---|---|---|---|---|---|---|---|---|---|---|"]
     for k, rs in group(rows, keys).items():
         n = lambda e: sum(r.get("ended") == e for r in rs)
         steps = [r.get("steps", 0) for r in rs if r.get("kind") == "agentic"]
+        tok = lambda f: sum((r.get("usage") or {}).get(f, 0) for r in rs)
         out.append(f"| {k[0]} | {k[1]} | {k[2]} | {n('answer')} | {n('action')} | {n('step_cap')} | {n('unsupported')} | "
-                   f"{n('error')} | {n('refusal')} | {sum(steps) / len(steps) if steps else 0:.1f} |")
+                   f"{n('error')} | {n('refusal')} | {sum(steps) / len(steps) if steps else 0:.1f} | "
+                   f"{tok('input_tokens') / 1000:.0f}k / {tok('output_tokens') / 1000:.0f}k |")
     unsupported = defaultdict(int)
     for r in rows:
         for t in r.get("tool_trace") or []:

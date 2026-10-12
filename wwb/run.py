@@ -74,27 +74,38 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
     r = provider.complete(model, msgs, tools=tools, thinking=thinking, temperature=temperature)
     if not tools:
         return r, trace, "error" if r.error else "refusal" if r.stop_reason == "refusal" else "answer"
+    used: dict = {}  # token counts summed over every call of the run, not just the last
+
+    def ended(how):
+        for u in calls_usage:
+            for k, v in u.items():
+                used[k] = used.get(k, 0) + v if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+        r.usage = {**used, "calls": len(calls_usage)}
+        return r, trace, how
+
+    calls_usage = [r.usage or {}]
     box = Sandbox(session, parse_time(case.now) if case.now else None)
     msgs = list(msgs)
     step = 0
     while True:
         if r.error:
-            return r, trace, "error"
+            return ended("error")
         if r.stop_reason == "refusal":
-            return r, trace, "refusal"
+            return ended("refusal")
         if not r.tool_calls:
-            return r, trace, "answer"
+            return ended("answer")
         results = [box.run(tc) for tc in r.tool_calls]
         step += 1
         entries = [{"step": step, "said": r.text if i == 0 else "", "tool": tc["name"], "command": describe_call(tc),
                     "kind": x.kind, "output": x.output[:1500], "clock": x.clock, "state": x.state, "denied": x.denied}
                    for i, (tc, x) in enumerate(zip(r.tool_calls, results))]
         if any(x.kind == "action" for x in results):
-            return r, trace, "action"
+            return ended("action")
         if any(x.kind == "unsupported" for x in results):
-            return r, trace + [e for e in entries if e["kind"] == "unsupported"], "unsupported"
+            trace += [e for e in entries if e["kind"] == "unsupported"]
+            return ended("unsupported")
         if step > MAX_STEPS:
-            return r, trace, "step_cap"
+            return ended("step_cap")
         calls = [{"id": tc.get("id") or f"call_sim_{step}_{i}", "type": "function",
                   "function": {"name": tc["name"], "arguments": tc.get("arguments", "")}}
                  for i, tc in enumerate(r.tool_calls)]
@@ -108,6 +119,7 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
             msgs.append({"role": "tool", "tool_call_id": call["id"], "content": x.output})
         trace += entries
         r = provider.complete(model, msgs, tools=tools, thinking=thinking, temperature=temperature)
+        calls_usage.append(r.usage or {})
 
 
 def smoke_cases(cases, sessions) -> list:
@@ -152,7 +164,8 @@ def main(argv=None):
     ap.add_argument("--provider", default="anthropic", choices=["anthropic", "openrouter", "mock"],
                     help="where the models under test run (default: Claude API)")
     ap.add_argument("--models", default=None,
-                    help=f"comma-separated model ids (default for anthropic: {','.join(LATEST_ANTHROPIC_MODELS)})")
+                    help=f"comma-separated model ids (default for anthropic: {','.join(LATEST_ANTHROPIC_MODELS)} "
+                         f"with --full, else {','.join(SMOKE_MODELS)})")
     ap.add_argument("--variants", default=None, help=f"comma-separated, from {list(VARIANTS)} (default: all)")
     ap.add_argument("--thinking", default=None, help="comma-separated: off,on (default: off,on for anthropic, off otherwise)")
     ap.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
@@ -182,7 +195,8 @@ def main(argv=None):
         ap.error("full runs are off until the code and the evals are validated: use --smoke "
                  "(or --limit / --filter), or pass --full to run the whole dataset")
     if args.provider == "anthropic":
-        args.models = args.models or ",".join(SMOKE_MODELS if args.smoke else LATEST_ANTHROPIC_MODELS)
+        # Partial runs (--smoke, --filter, --limit) are for validation: one cheap model unless told otherwise.
+        args.models = args.models or ",".join(LATEST_ANTHROPIC_MODELS if args.full else SMOKE_MODELS)
         args.thinking = args.thinking or "off,on"
         if args.temperature is not None:
             ap.error("current Claude models reject non-default sampling parameters; drop --temperature")

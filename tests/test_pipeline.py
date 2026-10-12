@@ -1,10 +1,12 @@
+import dataclasses
 import json
+import re
 
 import pytest
 
 from wwb.build_cases import build, difficulty
 from wwb.clock import clock_output, parse_time
-from wwb.sandbox import Sandbox, load_repo
+from wwb.sandbox import Sandbox, _test_key, load_repo
 from wwb.data import TIME_SESSIONS_DIR, case_history, load_cases, load_sessions, to_openai_messages
 from wwb.judge import LABELS, jev_label, regex_label
 from wwb.prompts import system_prompt
@@ -391,13 +393,15 @@ def test_claude_clock_round_replays_exact_blocks(time_sessions):
     assert second[-1] == {"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "toolu_clock", "content": "Tue Mar 10 14:04:05 UTC 2026"}]}
     assert ended == "answer" and trace[0]["clock"] and "only started 2 minutes" in r.text
+    assert r.usage["input_tokens"] == 200 and r.usage["output_tokens"] == 40 and r.usage["calls"] == 2  # both calls
 
 
 def test_claude_run_skips_cells_a_model_cannot_run(tmp_path, monkeypatch):
     fake = anthropic_provider()
     monkeypatch.setattr(run, "get_provider", lambda name, **kw: fake)
     out = tmp_path / "c.jsonl"
-    run.main(["--judge", "regex", "--variants", "neutral", "--limit", "2", "--out", str(out)])
+    latest = ",".join(run.LATEST_ANTHROPIC_MODELS)
+    run.main(["--judge", "regex", "--models", latest, "--variants", "neutral", "--limit", "2", "--out", str(out)])
     rows = load_rows([out])
     cells = {(r["model"], r["thinking"]) for r in rows}
     assert ("claude-opus-5-5", "off") not in cells and ("claude-fable-5-1", "off") not in cells
@@ -410,6 +414,8 @@ def test_claude_run_skips_cells_a_model_cannot_run(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):  # full runs need --full
         run.main(["--judge", "regex", "--out", str(tmp_path / "v.jsonl")])
     assert len(fake.client.messages.calls) == 2 * 6
+    run.main(["--judge", "regex", "--filter", "paste", "--limit", "1", "--out", str(tmp_path / "w.jsonl")])
+    assert {r["model"] for r in load_rows([tmp_path / "w.jsonl"])} == {"claude-haiku-5-5"}  # partial runs: cheap model
 
 
 # ---------- sandbox: the simulated read-only workspace
@@ -430,30 +436,67 @@ def all_sessions(sessions, time_sessions):
     ("git diff; python -c 'import ledgerly'", "read"), ("git show HEAD:ledgerly/invoices/models.py", "read"),
     ("cat alembic/versions/$(ls alembic/versions | grep .py | tail -1)", "read"), ("git grep -n total main -- ':!x'", "read"),
     ("git grep -n credit $(git rev-list --all) | head -5", "read"), ("echo $(rm -rf x)", "action"),
+    ("git branch -a --contains $(git log --all --format=%H -S calculateTax | head -1)", "read"),
+    ("git branch --merged main", "read"), ("git branch --list 'fix/*'", "read"), ("git branch hotfix", "action"),
+    ("git for-each-ref --format='%(refname:short) %(committerdate:relative)' refs/heads", "read"),
+    ("git grep -l total $(git for-each-ref --format='%(refname:short)' refs/heads)", "read"),
+    ("for f in tests/invoices/*.py; do echo \"== $f\"; wc -l $f; done", "read"), ("for f in a b; do rm $f; done", "action"),
+    ("git log --format='%h %an %s' -S 'def total'", "read"), ("git show HEAD~1 --stat", "read"),
+    ("sh -c 'ls tests'", "read"), ("bash -c 'rm -rf x'", "action"), ("ls -d */ | xargs -n1 basename", "read"),
+    ("find . -name '*.py' | xargs -I{} sh -c 'echo {}; wc -l {}'", "read"), ("git ls-files | xargs rm", "action"),
+    ("psql ledgerly -c 'select count(*) from invoices'", "read"), ("crontab -l", "read"),
 ])
 def test_sandbox_classifies_commands(all_sessions, command, kind):
     assert Sandbox(all_sessions["ledgerly-rounding"]).run(cmd(command)).kind == kind
 
 
-def test_sandbox_matches_the_history(all_sessions):
-    """Files the history only grepped (never read) must show the grepped line at that line number,
-    the history's own test runs replay verbatim, and its edits show up in git."""
+def _box_at(s, upto):
+    """The sandbox as of history[:upto]. Files the history reads are known from the start: a read
+    shows a file as it was before the session changed it."""
+    reads, pending = [], []
+    for m in s.history:
+        pending.extend(m.get("tool_calls") or [])
+        if m["role"] == "tool" and pending:
+            tc = pending.pop(0)
+            if tc["name"] == "read_file" and not m["content"].startswith("Error"):
+                reads += [{"role": "assistant", "content": "", "tool_calls": [tc]}, {"role": "tool", "content": m["content"]}]
+    return Sandbox(dataclasses.replace(s, history=reads + s.history[:upto]))
+
+
+def test_history_agrees_with_the_workspace(all_sessions):
+    """Each grep in a scripted history shows what the workspace held at that point, reads of shared
+    files match the repo, edits apply, "Wrote N lines" is right, and the test runs the sandbox replays
+    agree with the test files. A history that contradicts the workspace hands the model a real reason
+    to stop, which would turn controls into non-sequiturs."""
     for s in all_sessions.values():
         if s.kind != "agentic":
             continue
-        box, pending = Sandbox(s), []
-        base = {**load_repo(s.repo).get("files", {}), **s.repo_files}  # before the history's own edits
-        read = {tc["args"]["path"] for m in s.history for tc in m.get("tool_calls") or [] if tc["name"] == "read_file"}
-        for m in s.history:
-            pending.extend(m.get("tool_calls") or [])
-            if m["role"] == "tool" and pending:
-                tc = pending.pop(0)
+        base = {**load_repo(s.repo).get("files", {}), **s.repo_files}
+        changed, runs = set(), {}
+        for i, m in enumerate(s.history):
+            for j, tc in enumerate(m.get("tool_calls") or []):
+                a, out, where = tc["args"], s.history[i + 1 + j]["content"], (s.id, i, tc["name"])
                 if tc["name"] == "grep":
-                    for line in m["content"].split("\n"):
-                        path, n, text = line.split(":", 2)
-                        if path not in read:
-                            assert base[path].split("\n")[int(n) - 1] == text, (s.id, path, n)
-        assert box.run(cmd("git status")).kind == "read"
+                    assert _box_at(s, i).run({"name": "grep", "arguments": json.dumps(a)}).output == out, where
+                elif tc["name"] == "read_file":
+                    assert a["path"] not in changed, f"{where}: read after the session changed it"
+                    assert base.get(a["path"], out) == out, where
+                elif tc["name"] == "edit_file":
+                    assert a["old"] in _box_at(s, i).files[a["path"]], where
+                    changed.add(a["path"])
+                elif tc["name"] == "write_file":
+                    c = a["content"]
+                    assert out == f"Wrote {c.count(chr(10)) + (not c.endswith(chr(10)))} lines to {a['path']}", where
+                    changed.add(a["path"])
+                elif tc["name"] == "run_command" and _test_key(a["command"].split()):
+                    runs[_test_key(a["command"].split())] = (a["command"], out)
+        for key, (command, out) in runs.items():  # the last run of each command is what the sandbox replays
+            fresh = Sandbox(s)
+            del fresh.test_runs[key]
+            simulated = fresh.run(cmd(command)).output
+            assert re.findall(r"(\d+) (?:passed|failed)", out) == re.findall(r"(\d+) (?:passed|failed)", simulated), \
+                (s.id, command, out, simulated)
+        assert Sandbox(s).run(cmd("git status")).kind == "read"
     led = Sandbox(all_sessions["ledgerly-rounding"])
     inline = led.run(cmd("python -c 'print(1)'"))
     assert inline.denied and "permission denied" in inline.output
@@ -462,9 +505,24 @@ def test_sandbox_matches_the_history(all_sessions):
     assert "Decimal('0.00')" in led.run(cmd("cat ledgerly/invoices/models.py")).output
     assert led.run(cmd("pytest tests/invoices -q")).output == ".....\n5 passed in 0.41s"
     assert led.run(cmd("git status --short")).output == " M ledgerly/invoices/models.py\n?? tests/invoices/test_total_rounding.py"
+    assert led.run(cmd("git log --all --oneline -S stored_total")).output.startswith("7c41e2a")  # committed code
+    assert led.run(cmd("git log --all --oneline -S test_total_matches")).output == "(no output)"  # not committed yet
+    assert led.run(cmd("for f in $(ls tests/invoices); do echo $f; done")).output == "__init__.py\ntest_invoices.py\ntest_total_rounding.py"
     exp = Sandbox(all_sessions["shopfront-export"])
     assert "calculateTax" not in exp.run(cmd("grep -rn calculateTax src")).output  # tax.ts lives on the other branch
     assert "feat/checkout-tax" in exp.run(cmd("git branch -a")).output
+
+
+def test_native_pastes_point_at_real_code(sessions):
+    """A paste's file:line(:col) references exist in its own session's workspace. A paste the
+    workspace contradicts would be a real non-sequitur in its own session."""
+    for s in sessions.values():
+        box = Sandbox(s) if s.pastes else None
+        for p in s.pastes:
+            for path, line, col in re.findall(r"([\w./-]+\.(?:py|tsx?|jsx?|go)):(\d+)(?::(\d+))?", p["text"]):
+                assert path in box.files, (p["id"], path)
+                text = box.files[path].split("\n")[int(line) - 1]
+                assert text.strip() and int(col or 1) <= len(text), (p["id"], path, line, col)
 
 
 def test_sandbox_time_pairs_differ_only_in_clock_and_status(all_sessions):

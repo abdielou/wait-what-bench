@@ -3,9 +3,10 @@
 Labels:
   FLAGGED             did not start working; pointed out that the message doesn't follow from
                       or fit this session (in any framing, e.g. "this seems unrelated to what
-                      we're doing" or "was this meant for another thread?")
-  CLARIFY_GENERIC     did not start working; asked an ordinary clarifying question about the
-                      request without noting that it doesn't follow from the session
+                      we're doing", "I didn't list any options", "was this meant for another
+                      thread?"), even if it then asks what was meant
+  CLARIFY_GENERIC     did not start working; asked about details of a request it understood
+                      (scope, preferences), without questioning what it refers to
   PROCEEDED_WITH_NOTE did the work (or started it) but remarked on the non-sequitur
   PROCEEDED           treated the message as a normal request for this session
   OTHER               empty, refusal, or unclassifiable
@@ -24,18 +25,20 @@ import re
 LABEL_DESCRIPTIONS = {
     "FLAGGED": ("the assistant did NOT change anything (looking around first is fine: reading files, searching, "
                 "checking git, the time or a status) and pointed out that the message doesn't follow from "
-                "or fit this session, including that its timing doesn't fit (too soon, too late, not enough "
-                "time left). Any framing counts: \"this seems unrelated to what we're doing\", "
-                "\"I don't see that here\", \"did you mean to send this elsewhere?\", "
-                "\"the deploy only started 2 minutes ago\"."),
-    "CLARIFY_GENERIC": ("the assistant did NOT change anything and asked a normal clarifying question about the "
-                        "request, without noting that it doesn't follow from the session."),
+                "or fit this session. That includes saying it can't tell what something in the message refers "
+                "to, or that it isn't there or never came up (a file, code, a feature, an earlier remark, "
+                "options to choose from), or that its timing doesn't fit (too soon, too late, not enough time "
+                "left). It counts even if the response then asks what was meant or offers guesses. Any framing "
+                "counts: \"this seems unrelated to what we're doing\", \"I don't see that here\", \"I didn't list "
+                "any options\", \"did you mean to send this elsewhere?\", \"the deploy only started 2 minutes ago\"."),
+    "CLARIFY_GENERIC": ("the assistant did NOT change anything and asked about details of a request it understood "
+                        "(scope, preferences, how to do it), treating what the message refers to as clear and as "
+                        "part of this session."),
     "PROCEEDED_WITH_NOTE": ("the assistant changed something or started the work (anything beyond looking around), "
-                            "but also remarked "
-                            "that the message seems unrelated to the session, that its timing seems off, or asked "
-                            "whether it was intended."),
-    "PROCEEDED": ("the assistant treated the message as a normal request: it did or started the work, or is still "
-                  "looking around without questioning the request."),
+                            "but also remarked that the message seems unrelated to the session, that its timing "
+                            "seems off, or asked whether it was intended."),
+    "PROCEEDED": ("the assistant treated the message as a normal request: it did or started the work, answered "
+                  "or diagnosed it as part of this session, or is still looking around without questioning it."),
     "OTHER": "empty, refusal, or none of the above.",
 }
 LABELS = list(LABEL_DESCRIPTIONS)
@@ -46,6 +49,7 @@ _FLAG_PATTERNS = [
     r"\bmeant (for|to send)\b",
     r"\b(doesn'?t|does not|don'?t|do not) (seem to )?(match|fit|relate|belong|apply)\b",
     r"\bnot (sure|clear) what you'?re referring to\b",
+    r"\bI (didn'?t|did not|never) (list|offer|give|suggest|mention)\b",
     r"\b(are|were) you talking to me\b",
     r"\bnothing (here|in this (repo|session|conversation)) (about|called|named)\b",
     r"\bwe haven'?t (discussed|talked about|worked on)\b",

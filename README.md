@@ -51,7 +51,7 @@ python -m wwb.run --full --out results/first.jsonl        # whole dataset: only 
 python -m wwb.report results/first.jsonl
 ```
 
-By default the run covers the latest Claude models (`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`), all three prompt variants, and thinking off and on. Thinking can't be turned off on Fable 5.1 or Opus 5.5, so those cells are skipped (the run lists them at the start); Sonnet 5.5 runs "off" as `between_tools` and Haiku 5.5 as `disabled`. Each model uses its own default effort unless you pass `--effort`. Pick models with `--models`, or run other providers' models through OpenRouter with `--provider openrouter`.
+A `--full` run covers the latest Claude models (`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`), all three prompt variants, and thinking off and on. Partial runs (`--smoke`, `--filter`, `--limit`) default to `claude-haiku-5-5` only. Thinking can't be turned off on Fable 5.1 or Opus 5.5, so those cells are skipped (the run lists them at the start); Sonnet 5.5 runs "off" as `between_tools` and Haiku 5.5 as `disabled`. Each model uses its own default effort unless you pass `--effort`. Pick models with `--models`, or run other providers' models through OpenRouter with `--provider openrouter`.
 
 The judge defaults to TypeSafe's Jev (`typesafe/jev-1.13`), a decision model that picks one label and returns a probability for each, via OpenRouter's Decisions API. Use `--judge llm --judge-model <id>` for a chat-model judge instead.
 
@@ -77,4 +77,4 @@ CLAUDE.md              project context for coding agents
 
 ## Adding sessions
 
-Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere. Optional fields add the harder families: `question_endings` (end with options; answers should be meaningless without them, like "the second one"), `pastes` (agentic only) and `lures` (name the `targets` whose vocabulary they reuse).
+Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere. Agentic histories must agree with the simulated workspace (`python -m pytest` checks greps, reads, edits and test counts against it), and native pastes should be errors the session's code would really produce. Optional fields add the harder families: `question_endings` (end with options; answers should be meaningless without them, like "the second one"), `pastes` (agentic only) and `lures` (name the `targets` whose vocabulary they reuse).

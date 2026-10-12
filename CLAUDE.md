@@ -35,12 +35,11 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 
 ## Current state
 
-- **Rule: no full runs until the code and the evals are validated, and validate on one cheap model.** Use `python -m wwb.run --smoke` (defaults to `claude-haiku-5-5`, a few cents). The runner refuses whole-dataset runs without `--full`.
-- **First live smoke run (2026-10-12, before the sandbox):** plumbing worked (66 calls on the four latest Claude models, no errors, all labels from Jev, $0.68), and it showed models investigate first and that Jev mislabeled a correct timing answer it had no context for. Both fixed: the sandbox, and the judge now sees the trace.
-
-- Scaffold complete and tested with the mock provider (`python -m pytest`, `python -m wwb.run --provider mock`).
-- **Not yet run against real models.** Needs `ANTHROPIC_API_KEY` (models; in Claude Code cloud environments, name it `WWB_ANTHROPIC_API_KEY`, since `ANTHROPIC_API_KEY` isn't passed through there) and `OPENROUTER_API_KEY` (Jev judge).
-- **Jev judge verified live (2026-10-12):** the Decisions API request and response match `OpenRouterProvider.decide` / `jev_label`; 4 of 4 sample responses labeled as expected (FLAGGED, PROCEEDED, CLARIFY_GENERIC, and a timing catch).
+- **Rule: no full runs until the code and the evals are validated, and validate on one cheap model.** Use `python -m wwb.run --smoke` (`claude-haiku-5-5`, a few cents). The runner refuses whole-dataset runs without `--full`, and partial runs (`--smoke`, `--filter`, `--limit`) default to Haiku.
+- **Validation so far (2026-10-12):** a first smoke on the four latest Claude models ($0.68, no errors) showed that models look around before acting and that Jev needed context. That led to the simulated workspace and to giving the judge the trace. Haiku rounds 1 to 4 since then. Most of what they found was the scripted sessions contradicting themselves once a model could check them: wrong grep line numbers, claims about files never read, a test file the assistant said it wrote that was already there, a pasted CI failure for uncommitted code. Models stopped to correct the record, which on a control looks like a false alarm. All fixed. `tests/` now replays every history against the workspace, so new sessions can't drift.
+- **Judge rubric:** saying that something the message refers to isn't there ("I didn't list anything numbered") is FLAGGED even if the model then asks what was meant. A bare "which one do you mean?" is CLARIFY_GENERIC: it counts in `catch_any`, not `catch`.
+- Keys: `ANTHROPIC_API_KEY` for the models (in Claude Code cloud environments, `WWB_ANTHROPIC_API_KEY`, since `ANTHROPIC_API_KEY` isn't passed through there) and `OPENROUTER_API_KEY` for Jev.
+- **Jev judge verified live (2026-10-12):** the Decisions API request and response match `OpenRouterProvider.decide` / `jev_label`.
 - Seed dataset is small and synthetic: 5 sessions (3 agentic coding, 2 chat), 134 cases (88 swaps plus 46 in the newer families) plus 14 time cases. Enough to validate the pipeline, NOT enough for conclusions.
 
 ## Next steps (suggested order)
