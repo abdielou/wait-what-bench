@@ -159,9 +159,10 @@ def test_end_to_end_with_mock(tmp_path):
         return metrics([r for r in rows if r["model"] == model])
 
     eager, paranoid, oracle = m("mock/eager"), m("mock/paranoid"), m("mock/oracle")
-    assert eager["catch"] == 0 and eager["false_alarm"] == 0 and eager["acted"] == 1
-    assert paranoid["catch"] == 1 and paranoid["false_alarm"] == 1 and paranoid["score"] == 0.5
-    assert oracle["catch"] == 1 and oracle["false_alarm"] == 0 and oracle["score"] == 1
+    assert eager["catch"] == 0 and eager["no_false_alarm"] == 1 and eager["hands_off"] == 0
+    assert paranoid["catch"] == 1 and paranoid["no_false_alarm"] == 0 and paranoid["score"] == 0.5
+    rates = [k for k in oracle if not k.startswith("n_") and k != "excluded"]
+    assert all(oracle[k] == 1 for k in rates), {k: oracle[k] for k in rates}  # every rate: 100% is best
 
     # resume: a second run adds nothing
     run.main(["--provider", "mock", "--models", "mock/eager,mock/paranoid,mock/oracle",
@@ -272,9 +273,10 @@ def test_time_end_to_end_with_mock(tmp_path):
               "--variants", "neutral", "--filter", "::time::", "--out", str(out)])
     rows = load_rows([out])
     m = {name: time_metrics([r for r in rows if r["model"] == name]) for name in ("mock/eager", "mock/paranoid", "mock/oracle")}
-    assert m["mock/oracle"]["checked"] == 1 and m["mock/oracle"]["catch"] == 1 and m["mock/oracle"]["false_alarm"] == 0
+    oracle = m["mock/oracle"]
+    assert all(oracle[k] == 1 for k in ("checked", "catch", "heeded", "grounded", "no_false_alarm"))  # 100% is best
     assert m["mock/eager"]["checked"] == 0 and m["mock/eager"]["catch"] == 0
-    assert m["mock/paranoid"]["guessed"] == 1 and m["mock/paranoid"]["false_alarm"] == 1
+    assert m["mock/paranoid"]["grounded"] == 0 and m["mock/paranoid"]["no_false_alarm"] == 0  # flags without looking
     assert "## Time" in render(rows)
 
 

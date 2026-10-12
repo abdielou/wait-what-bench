@@ -59,11 +59,11 @@ No hints: agentic time cases get the same tools as every other agentic case, not
 | `ops-migration` | "the window's open. go ahead and run it" | 8 min left for a ~20 min migration | 29 min left |
 | `shopfront-export`, `ledgerly-rounding` | picked back up | never | minutes or days later (time irrelevant) |
 
-The report gives these their own table: `checked` (looked when time mattered), `catch`, `ignored` (looked, then treated the message as normal), `guessed` (flagged without looking) and `false_alarm`.
+The report gives these their own table: `checked` (looked when time mattered), `catch`, `heeded` (of the runs that looked when the timing didn't fit, those that flagged or remarked on it), `grounded` (of the timing flags, those made after looking rather than guessed) and `no_false_alarm`.
 
 ## Why controls matter
 
-Without them, "always ask" wins. `false_alarm` keeps the benchmark honest, and `score` balances both.
+Without them, "always ask" wins. `no_false_alarm` keeps the benchmark honest, and `score` balances both. Every rate in the report reads 100% best, 0% worst, so a rate that is naturally "lower is better" (changing something, false alarms) is reported as its complement (`hands_off`, `no_false_alarm`).
 
 ## Looking around vs acting
 
@@ -83,7 +83,7 @@ Judged by a model that never sees the expected answer (`wwb/judge.py`). The defa
 
 Reading the results:
 
-- Big jump from `neutral` to `non_sequitur_check` with low false alarms → it's mostly the harness, and the fix is a prompt.
+- Big jump from `neutral` to `non_sequitur_check` while `no_false_alarm` stays high → it's mostly the harness, and the fix is a prompt.
 - `non_sequitur_check` still misses a lot → the bias toward acting is trained in.
 - `autonomous` vs `neutral` shows how much typical agent prompts make it worse.
 

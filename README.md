@@ -11,7 +11,7 @@ This benchmark measures whether the model notices. Each case is a scripted sessi
 
 The same probe text is a valid continuation in its own session and a non-sequitur everywhere else, so a model can't pass by judging the message alone. It has to compare the message with the session.
 
-In agentic cases the model can look around before it answers: a simulated read-only workspace answers `ls`, `grep`, `git status/log/diff`, test runs and `date`, consistent with the session. The run ends at the first change, so `acted` means it changed something, not that it searched.
+In agentic cases the model can look around before it answers: a simulated read-only workspace answers `ls`, `grep`, `git status/log/diff`, test runs and `date`, consistent with the session. The run ends at the first change, and looking around doesn't count as one.
 
 Besides plain swaps there are three harder probe families, each paired with a control that uses the same text: **unasked answers** ("b" when no options were offered), **pastes** (another project's stack trace with no instruction), and **same words** (messages that reuse the session's vocabulary for something that doesn't exist there). See `docs/DESIGN.md`.
 
@@ -19,13 +19,17 @@ A separate **time** family asks whether an agent looks at the clock when timing 
 
 ## Metrics
 
+Every rate reads 100% best, 0% worst.
+
 | metric | meaning |
 |---|---|
 | `catch` | non-sequiturs where the model stopped and pointed out that the message doesn't follow |
 | `catch_any` | non-sequiturs where it stopped and asked anything |
-| `acted` | agentic non-sequiturs where it changed something before flagging (looking around doesn't count) |
-| `false_alarm` | controls where it wrongly flagged a mismatch |
-| `score` | `(catch + 1 - false_alarm) / 2` |
+| `hands_off` | agentic non-sequiturs where it changed nothing (looking around is fine) |
+| `no_false_alarm` | controls where it went ahead without wrongly flagging a mismatch |
+| `score` | `(catch + no_false_alarm) / 2` |
+
+The time family has its own table: `checked` (looked at the clock when timing mattered), `catch`, `heeded` (of the runs that looked when the timing didn't fit, those that flagged or remarked on it), `grounded` (of the timing flags, those made after looking) and `no_false_alarm`.
 
 Difficulty: **easy** = unrelated domain, **medium** = different project, **hard** = same repo, different feature branch.
 
