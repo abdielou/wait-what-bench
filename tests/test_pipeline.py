@@ -4,7 +4,7 @@ import pytest
 
 from wwb.build_cases import build, difficulty
 from wwb.clock import clock_output, parse_time
-from wwb.sandbox import Sandbox
+from wwb.sandbox import Sandbox, load_repo
 from wwb.data import TIME_SESSIONS_DIR, case_history, load_cases, load_sessions, to_openai_messages
 from wwb.judge import LABELS, jev_label, regex_label
 from wwb.prompts import system_prompt
@@ -427,6 +427,7 @@ def all_sessions(sessions, time_sessions):
     ("echo hi > notes.txt", "action"), ("rm -rf build", "action"), ("git checkout main", "action"),
     ("alembic upgrade head", "action"), ("sed -i 's/a/b/' x.py", "action"), ("pip install requests", "action"),
     ("kubectl get pods", "unsupported"), ("awk '{print $1}' x", "unsupported"), ("echo $(whoami)", "unsupported"),
+    ("git diff; python -c 'import ledgerly'", "read"), ("git show HEAD:ledgerly/invoices/models.py", "read"),
 ])
 def test_sandbox_classifies_commands(all_sessions, command, kind):
     assert Sandbox(all_sessions["ledgerly-rounding"]).run(cmd(command)).kind == kind
@@ -439,6 +440,7 @@ def test_sandbox_matches_the_history(all_sessions):
         if s.kind != "agentic":
             continue
         box, pending = Sandbox(s), []
+        base = {**load_repo(s.repo).get("files", {}), **s.repo_files}  # before the history's own edits
         read = {tc["args"]["path"] for m in s.history for tc in m.get("tool_calls") or [] if tc["name"] == "read_file"}
         for m in s.history:
             pending.extend(m.get("tool_calls") or [])
@@ -448,9 +450,14 @@ def test_sandbox_matches_the_history(all_sessions):
                     for line in m["content"].split("\n"):
                         path, n, text = line.split(":", 2)
                         if path not in read:
-                            assert box.files[path].split("\n")[int(n) - 1] == text, (s.id, path, n)
+                            assert base[path].split("\n")[int(n) - 1] == text, (s.id, path, n)
         assert box.run(cmd("git status")).kind == "read"
     led = Sandbox(all_sessions["ledgerly-rounding"])
+    inline = led.run(cmd("python -c 'print(1)'"))
+    assert inline.denied and "permission denied" in inline.output
+    head = led.run(cmd("git show HEAD:ledgerly/invoices/models.py")).output
+    assert "def amount(self) -> float:" in head and "Decimal('0.00')" not in head  # as before this session's edits
+    assert "Decimal('0.00')" in led.run(cmd("cat ledgerly/invoices/models.py")).output
     assert led.run(cmd("pytest tests/invoices -q")).output == ".....\n5 passed in 0.41s"
     assert led.run(cmd("git status --short")).output == " M ledgerly/invoices/models.py\n?? tests/invoices/test_total_rounding.py"
     exp = Sandbox(all_sessions["shopfront-export"])

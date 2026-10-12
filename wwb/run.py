@@ -87,7 +87,7 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
         results = [box.run(tc) for tc in r.tool_calls]
         step += 1
         entries = [{"step": step, "said": r.text if i == 0 else "", "tool": tc["name"], "command": describe_call(tc),
-                    "kind": x.kind, "output": x.output[:1500], "clock": x.clock, "state": x.state}
+                    "kind": x.kind, "output": x.output[:1500], "clock": x.clock, "state": x.state, "denied": x.denied}
                    for i, (tc, x) in enumerate(zip(r.tool_calls, results))]
         if any(x.kind == "action" for x in results):
             return r, trace, "action"

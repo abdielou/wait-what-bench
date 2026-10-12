@@ -15,6 +15,10 @@ tool call is classified:
   unsupported  can't be simulated or safely classified. The response ends without counting as
                acting, and the command is kept in the trace so the sandbox can learn it.
 
+Inline code (`python -c`, `node -e`, `bash -c`) can't be simulated either, but models use it to
+inspect things, so it gets "permission denied" (as in a harness that requires approval) and the
+model carries on.
+
 Outputs depend only on the session and the hidden time, so the two cases of a time pair see
 identical answers except from the clock and the time-dependent status commands.
 """
@@ -52,6 +56,7 @@ class Result:
     output: str = ""
     clock: bool = False  # read the clock
     state: bool = False  # read a declared status command
+    denied: bool = False  # inline code was refused (the model sees "permission denied" and continues)
 
 
 class Action(Exception):
@@ -259,6 +264,7 @@ class Sandbox:
         self.files: dict[str, str] = {_norm(p): c for p, c in {**repo.get("files", {}), **session.repo_files}.items()}
         self.tracked = set(self.files)
         self.diffs: dict[str, list[tuple[str, str]]] = {}
+        self.originals: dict[str, str] = {}  # tracked files as of HEAD, before this session's edits
         self.branches = list(dict.fromkeys(repo.get("branches", ["main"]) + [self.branch]))
         self.log = [line.replace("{branch}", self.branch) for line in repo.get("git_log", [])] \
             or [f"0a1b2c3 (HEAD -> {self.branch}) Initial commit"]
@@ -283,11 +289,14 @@ class Sandbox:
                 elif name == "write_file":
                     p = _norm(a["path"])
                     if p in self.tracked:
+                        self.originals.setdefault(p, self.files.get(p, ""))
                         self.diffs.setdefault(p, []).append((self.files.get(p, ""), a.get("content", "")))
                     self.files[p] = a.get("content", "")
                 elif name == "edit_file":
                     p, old, new = _norm(a["path"]), a.get("old", ""), a.get("new", "")
                     cur = self.files.get(p, "")
+                    if p in self.tracked:
+                        self.originals.setdefault(p, cur)
                     self.files[p] = cur.replace(old, new, 1) if old and old in cur else (cur + "\n" + new if cur else new)
                     if p in self.tracked:
                         self.diffs.setdefault(p, []).append((old, new))
@@ -366,7 +375,7 @@ class Sandbox:
         if name == "grep":
             return Result("read", _cap(self._grep_tool(str(args.get("pattern", "")), str(args.get("path") or "."))))
         if name == "run_command":
-            self._clock = self._state = False
+            self._clock = self._state = self._denied = False
             try:
                 out, code = self._shell(str(args.get("command", "")))
             except Action:
@@ -378,7 +387,7 @@ class Sandbox:
             text = out.rstrip("\n")
             text = (text + (f"\n(exit code {code})" if code else "")) if text else \
                 ("(no output)" if not code else f"(no output, exit code {code})")
-            return Result("read", _cap(text), self._clock, self._state)
+            return Result("read", _cap(text), self._clock, self._state, self._denied)
         return Result("unsupported", f"unknown tool {name}")
 
     def _read_file(self, path: str) -> str:
@@ -490,6 +499,10 @@ class Sandbox:
         if clock is not None:
             self._clock = True
             return clock, 0, cwd, ""
+        if (prog in ("python", "python3", "node", "ruby", "perl", "php") and argv[1:2] and argv[1] in ("-c", "-e", "-p", "-r")) \
+                or (prog in ("bash", "sh", "zsh") and argv[1:2] == ["-c"]):
+            self._denied = True
+            return "", 126, cwd, f"permission denied: running inline code ({prog} {argv[1]}) isn't allowed in this workspace"
         handler = getattr(self, "_cmd_" + prog.replace("-", "_").replace(".", "_"), None) \
             if re.fullmatch(r"[a-z][a-z0-9.-]*", prog) else None
         if handler:
@@ -951,7 +964,16 @@ class Sandbox:
                     out += ["@@"] + [f"-{x}" for x in old.split("\n")] + [f"+{x}" for x in new.split("\n")]
             return "\n".join(out), 0, ""
         if sub == "show":
-            return self.log[0] + ("" if "--stat" in rest or "--oneline" in rest else ""), 0, ""
+            spec = next((a for a in rest if ":" in a and not a.startswith("-")), None)
+            if spec:
+                rev, path = spec.split(":", 1)
+                p = self._resolve(path, cwd)
+                if p in self.originals:
+                    return self.originals[p], 0, ""
+                if p in self.tracked and p in self.files:
+                    return self.files[p], 0, ""
+                return "", 128, f"fatal: path '{path}' does not exist in '{rev or 'HEAD'}'"
+            return self.log[0], 0, ""
         if sub == "branch":
             if any(not a.startswith("-") for a in rest) or any(a in rest for a in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy")):
                 raise Action("git branch changes")

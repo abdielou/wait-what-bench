@@ -101,6 +101,9 @@ def render_validation(rows, keys) -> list[str]:
         for t in r.get("tool_trace") or []:
             if t.get("kind") == "unsupported":
                 unsupported[t["command"][:120]] += 1
+    denied = sum(1 for r in rows for t in (r.get("tool_trace") or []) if t.get("denied"))
+    if denied:
+        out.append(f"\nInline code refused with \"permission denied\" (the model carried on): {denied} call(s).")
     if unsupported:
         out.append("\n## Commands the sandbox couldn't simulate\n")
         out += [f"- `{c}` ({n})" for c, n in sorted(unsupported.items(), key=lambda x: -x[1])[:30]]
