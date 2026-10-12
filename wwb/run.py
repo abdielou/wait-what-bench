@@ -7,9 +7,13 @@ status command, the harness answers with the case's hidden time and lets it go o
 
 Examples:
   python -m wwb.run --provider mock --models mock/eager,mock/paranoid --judge regex
-  python -m wwb.run --models anthropic/claude-sonnet-4.5,openai/gpt-5 \\
-      --variants neutral,autonomous,non_sequitur_check --thinking off,on \\
-      --out results/first.jsonl            # judge defaults to Jev (typesafe/jev-1.13)
+  python -m wwb.run --limit 5 --out results/smoke.jsonl     # latest Claude models, judged by Jev
+  python -m wwb.run --out results/first.jsonl               # full run: all variants, thinking off,on
+  python -m wwb.run --provider openrouter --models openai/gpt-5 --thinking off,on --out results/or.jsonl
+
+Models run on the Claude API by default (ANTHROPIC_API_KEY or an `ant auth login` profile);
+the judge runs on OpenRouter (OPENROUTER_API_KEY). Cells a model can't run, like thinking
+off on Claude Opus 5.5, are skipped and listed at the start.
 
 Re-running with the same --out resumes: finished rows are skipped.
 """
@@ -26,7 +30,7 @@ from .clock import answer_tool_call, clock_output, parse_time
 from .data import CASES_PATH, case_history, load_all_sessions, load_cases, to_openai_messages
 from .judge import jev_label, llm_label, regex_label
 from .prompts import VARIANTS, system_prompt
-from .providers import MockProvider, get_provider
+from .providers import LATEST_ANTHROPIC_MODELS, AnthropicProvider, MockProvider, OpenRouterProvider, get_provider
 from .tools import TOOLS
 
 
@@ -63,6 +67,8 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
         assistant = {"role": "assistant", "content": r.text or None, "tool_calls": calls}
         if r.reasoning_details:
             assistant["reasoning_details"] = r.reasoning_details
+        if r.raw_content is not None:
+            assistant["native_content"] = r.raw_content  # Claude API: replay the exact blocks
         msgs.append(assistant)
         for call, (kind, command, output) in zip(calls, answers):
             msgs.append({"role": "tool", "tool_call_id": call["id"], "content": output})
@@ -88,10 +94,14 @@ def load_done(path: Path) -> set:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--provider", default="openrouter", choices=["openrouter", "mock"])
-    ap.add_argument("--models", required=True, help="comma-separated OpenRouter model ids")
+    ap.add_argument("--provider", default="anthropic", choices=["anthropic", "openrouter", "mock"],
+                    help="where the models under test run (default: Claude API)")
+    ap.add_argument("--models", default=None,
+                    help=f"comma-separated model ids (default for anthropic: {','.join(LATEST_ANTHROPIC_MODELS)})")
     ap.add_argument("--variants", default=",".join(VARIANTS), help=f"comma-separated, from {list(VARIANTS)}")
-    ap.add_argument("--thinking", default="off", help="comma-separated: off,on")
+    ap.add_argument("--thinking", default=None, help="comma-separated: off,on (default: off,on for anthropic, off otherwise)")
+    ap.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
+                    help="Claude API only: output_config.effort for every call (default: each model's own default)")
     ap.add_argument("--samples", type=int, default=1, help="responses per cell (use >1 with temperature)")
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--cases", type=Path, default=CASES_PATH)
@@ -108,7 +118,17 @@ def main(argv=None):
 
     if args.provider == "mock":
         args.judge = "regex"
-    elif args.judge == "jev" and not args.judge_model:
+    if args.provider == "anthropic":
+        args.models = args.models or ",".join(LATEST_ANTHROPIC_MODELS)
+        args.thinking = args.thinking or "off,on"
+        if args.temperature is not None:
+            ap.error("current Claude models reject non-default sampling parameters; drop --temperature")
+    elif args.effort:
+        ap.error("--effort applies to the Claude API provider only")
+    if not args.models:
+        ap.error("--models is required for this provider")
+    args.thinking = args.thinking or "off"
+    if args.judge == "jev" and not args.judge_model:
         args.judge_model = DEFAULT_JEV_MODEL
     elif args.judge == "llm" and not args.judge_model:
         ap.error("--judge llm needs --judge-model (or use --judge jev / regex)")
@@ -130,7 +150,15 @@ def main(argv=None):
     if args.limit:
         cases = cases[: args.limit]
 
-    provider = get_provider(args.provider)
+    provider = get_provider(args.provider, **({"effort": args.effort} if args.provider == "anthropic" else {}))
+    if isinstance(provider, AnthropicProvider):
+        problems = provider.preflight(models)
+        if problems:
+            raise SystemExit("not starting:\n  " + "\n  ".join(problems))
+    # The judge always runs on OpenRouter (Jev or a chat model), whatever runs the models.
+    judge_provider = None
+    if args.judge in ("jev", "llm"):
+        judge_provider = provider if isinstance(provider, OpenRouterProvider) else OpenRouterProvider()
     if isinstance(provider, MockProvider):
         for c in cases:
             key = MockProvider.oracle_key(build_messages(sessions[c.session_id], "neutral", c))
@@ -143,15 +171,21 @@ def main(argv=None):
     out.parent.mkdir(parents=True, exist_ok=True)
     done = load_done(out)
 
+    # Cells a model can't run (thinking off on an always-thinking model) are skipped, not errored.
+    cells = [(m, t) for m in models for t in thinking]
+    if isinstance(provider, AnthropicProvider):
+        for m, t in [(m, t) for m, t in cells if provider.thinking_config(m, t) is None]:
+            print(f"skipping {m} thinking={t}: not available for this model"
+                  + (f" at effort {args.effort}" if args.effort else ""))
+            cells.remove((m, t))
     jobs = []
     for c in cases:
-        for m in models:
+        for m, t in cells:
             for v in variants:
-                for t in thinking:
-                    for s in range(args.samples):
-                        key = (c.id, m, v, t, s)
-                        if key not in done:
-                            jobs.append((c, m, v, t, s))
+                for s in range(args.samples):
+                    key = (c.id, m, v, t, s)
+                    if key not in done:
+                        jobs.append((c, m, v, t, s))
     print(f"{len(jobs)} jobs ({len(done)} already done) -> {out}")
 
     lock = threading.Lock()
@@ -169,9 +203,11 @@ def main(argv=None):
         acted = bool(actions)
         if r.error:
             label, reason = "ERROR", r.error
+        elif r.stop_reason == "refusal":  # a safety classifier declined; nothing for the judge to read
+            label, reason = "OTHER", f"refusal ({r.usage.get('refusal_category')})"
         elif args.judge in ("jev", "llm"):
             judge = jev_label if args.judge == "jev" else llm_label
-            label, reason = judge(provider, args.judge_model, sess.summary, c.probe, r.text, actions)
+            label, reason = judge(judge_provider, args.judge_model, sess.summary, c.probe, r.text, actions)
         else:
             label, reason = regex_label(r.text, acted), "regex"
         return {
@@ -182,9 +218,13 @@ def main(argv=None):
             "checked_clock": any(x["kind"] == "clock" for x in trace),
             "checked_state": any(x["kind"] == "state" for x in trace), "tool_trace": trace,
             "donor_session_id": c.donor_session_id,
-            "model": m, "variant": v, "thinking": t, "sample": s,
+            "provider": args.provider, "model": m, "variant": v, "thinking": t,
+            "effort": args.effort or "default", "sample": s,
             "probe": c.probe, "response_text": r.text, "tool_calls": r.tool_calls,
-            "acted": acted, "reasoning_present": bool(r.reasoning),
+            "acted": acted, "stop_reason": r.stop_reason,
+            "reasoning_present": bool(r.reasoning) or any(
+                b.get("type") in ("thinking", "redacted_thinking") for b in (r.raw_content or [])),
+            "reasoning": (r.reasoning or "")[:4000],
             "label": label, "judge_reason": reason, "error": r.error, "usage": r.usage,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }

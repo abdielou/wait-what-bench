@@ -31,27 +31,29 @@ Every case runs under three system prompts (`neutral`, `autonomous`, `non_sequit
 
 ## Quick start
 
-No runtime dependencies (Python 3.10+, stdlib only).
+Python 3.10+. The core is stdlib only; running models on the Claude API needs the official SDK.
 
 ```bash
-pip install pytest            # tests only
-python -m pytest              # offline, uses mock models
+pip install -e '.[anthropic,dev]'
+python -m pytest              # offline, uses mock models and a fake Claude client
 
 # offline smoke run
 python -m wwb.run --provider mock --models mock/eager,mock/oracle --judge regex
 python -m wwb.report results/run-*.jsonl
 
-# real run via OpenRouter
+# real run: models on the Claude API, judged by Jev on OpenRouter
+export ANTHROPIC_API_KEY=...      # or `ant auth login`
 export OPENROUTER_API_KEY=...
-python -m wwb.run --models <model-a>,<model-b> \
-    --variants neutral,autonomous,non_sequitur_check --thinking off,on \
-    --out results/first.jsonl
+python -m wwb.run --limit 5 --out results/smoke.jsonl     # check it works first
+python -m wwb.run --out results/first.jsonl
 python -m wwb.report results/first.jsonl
 ```
 
-The judge defaults to TypeSafe's Jev (`typesafe/jev-1.13`), a decision model that picks one label and returns a probability for each, via OpenRouter's Decisions API with the same key. Use `--judge llm --judge-model <id>` for a chat-model judge instead.
+By default the run covers the latest Claude models (`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`), all three prompt variants, and thinking off and on. Thinking can't be turned off on Fable 5.1 or Opus 5.5, so those cells are skipped (the run lists them at the start); Sonnet 5.5 runs "off" as `between_tools` and Haiku 5.5 as `disabled`. Each model uses its own default effort unless you pass `--effort`. Pick models with `--models`, or run other providers' models through OpenRouter with `--provider openrouter`.
 
-Re-running with the same `--out` resumes and retries errors. Use `--limit 5` for a cheap smoke test.
+The judge defaults to TypeSafe's Jev (`typesafe/jev-1.13`), a decision model that picks one label and returns a probability for each, via OpenRouter's Decisions API. Use `--judge llm --judge-model <id>` for a chat-model judge instead.
+
+Re-running with the same `--out` resumes and retries errors.
 
 ## Layout
 
@@ -63,7 +65,7 @@ wwb/build_cases.py     message-swap generator, difficulty tiers
 wwb/prompts.py         system prompt variants
 wwb/tools.py           fake tools for agentic sessions (never executed)
 wwb/clock.py           mocked clock for the time family (answers `date` with the case's hidden time)
-wwb/providers.py       OpenRouter + mock models
+wwb/providers.py       Claude API (models), OpenRouter (judge, other models), mock models
 wwb/judge.py           labels: Jev or LLM judge + regex fallback
 wwb/run.py             runner (concurrent, resumable)
 wwb/report.py          markdown/CSV summary

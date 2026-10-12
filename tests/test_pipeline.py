@@ -268,3 +268,119 @@ def test_time_end_to_end_with_mock(tmp_path):
     assert m["mock/eager"]["checked"] == 0 and m["mock/eager"]["catch"] == 0
     assert m["mock/paranoid"]["guessed"] == 1 and m["mock/paranoid"]["false_alarm"] == 1
     assert "## Time" in render(rows)
+
+
+# ---------- Claude API provider (fake SDK client, no network)
+
+class FakeMessages:
+    def __init__(self, replies):
+        self.replies, self.calls = list(replies), []
+
+    def create(self, **kwargs):
+        self.calls.append(json.loads(json.dumps(kwargs)))
+        anthropic_types = pytest.importorskip("anthropic.types")
+        reply = self.replies.pop(0) if self.replies else {"content": [{"type": "text", "text": "Sure, on it."}]}
+        return anthropic_types.Message.model_validate({
+            "id": "msg_x", "type": "message", "role": "assistant", "model": kwargs["model"],
+            "stop_reason": reply.get("stop_reason", "end_turn"), "stop_sequence": None,
+            "usage": {"input_tokens": 100, "output_tokens": 20}, **reply})
+
+
+class FakeModels:
+    def __init__(self, known=("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")):
+        self.known = set(known)
+
+    def retrieve(self, model_id):
+        import anthropic, httpx2
+        if model_id not in self.known:
+            req = httpx2.Request("GET", f"https://api.anthropic.com/v1/models/{model_id}")
+            raise anthropic.NotFoundError("not found", response=httpx2.Response(404, request=req), body=None)
+        return {"id": model_id}
+
+
+class FakeClient:
+    def __init__(self, replies=()):
+        self.messages = FakeMessages(replies)
+        self.models = FakeModels()
+
+
+def anthropic_provider(replies=(), **kw):
+    pytest.importorskip("anthropic")
+    from wwb.providers import AnthropicProvider
+    return AnthropicProvider(client=FakeClient(replies), **kw)
+
+
+def test_claude_thinking_settings_per_model():
+    p = anthropic_provider()
+    assert p.thinking_config("claude-opus-5-5", "off") is None      # always thinks: skip the cell
+    assert p.thinking_config("claude-fable-5-1", "off") is None
+    assert p.thinking_config("claude-sonnet-5-5", "off") == {"type": "between_tools"}
+    assert p.thinking_config("claude-haiku-5-5", "off") == {"type": "disabled"}
+    assert p.thinking_config("claude-opus-5-5", "on") == {"type": "adaptive", "display": "summarized"}
+    assert anthropic_provider(effort="xhigh").thinking_config("claude-haiku-5-5", "off") is None
+
+
+def test_claude_request_shape(sessions):
+    p = anthropic_provider()
+    case = next(c for c in load_cases() if c.session_id == "ledgerly-rounding" and c.category == "continuation")
+    msgs = run.build_messages(sessions["ledgerly-rounding"], "neutral", case)
+    p.complete("claude-sonnet-5-5", msgs, tools=run.TOOLS, thinking="off")
+    req = p.client.messages.calls[0]
+    assert req["system"] == msgs[0]["content"] and "temperature" not in req
+    assert req["thinking"] == {"type": "between_tools"} and "output_config" not in req
+    assert {t["name"] for t in req["tools"]} == {"read_file", "write_file", "edit_file", "run_command", "grep"}
+    assert req["messages"][-1] == {"role": "user", "content": case.probe}
+    uses = [b["id"] for m in req["messages"] if m["role"] == "assistant" for b in m["content"] if b["type"] == "tool_use"]
+    results = [b["tool_use_id"] for m in req["messages"] if m["role"] == "user" and isinstance(m["content"], list)
+               for b in m["content"]]
+    assert uses == results and uses
+    assert all(b.get("text") != "" for m in req["messages"] if m["role"] == "assistant" for b in m["content"])
+    assert anthropic_provider().complete("claude-opus-5-5", msgs, temperature=0.5).error
+
+
+def test_claude_response_parsing_and_refusal():
+    p = anthropic_provider([
+        {"content": [{"type": "thinking", "thinking": "user mentions credit notes", "signature": "s1"},
+                     {"type": "text", "text": "Checking."},
+                     {"type": "tool_use", "id": "toolu_9", "name": "grep", "input": {"pattern": "credit"}}],
+         "stop_reason": "tool_use"},
+        {"content": [], "stop_reason": "refusal", "stop_details": {"type": "refusal", "category": "cyber", "explanation": "x"}},
+    ])
+    r = p.complete("claude-opus-5-5", [{"role": "user", "content": "hi"}], thinking="on")
+    assert r.text == "Checking." and r.reasoning == "user mentions credit notes" and r.stop_reason == "tool_use"
+    assert r.tool_calls == [{"id": "toolu_9", "name": "grep", "arguments": json.dumps({"pattern": "credit"})}]
+    assert r.raw_content[0] == {"type": "thinking", "thinking": "user mentions credit notes", "signature": "s1"}
+    refused = p.complete("claude-opus-5-5", [{"role": "user", "content": "hi"}], thinking="on")
+    assert refused.stop_reason == "refusal" and refused.usage["refusal_category"] == "cyber"
+
+
+def test_claude_clock_round_replays_exact_blocks(time_sessions):
+    s = time_sessions["ops-deploy"]
+    case = next(c for c in build({}, 2, 7, time_sessions) if c.id == "ops-deploy::time::dep-t1@early")
+    first = [{"type": "thinking", "thinking": "", "signature": "sig-1"},
+             {"type": "tool_use", "id": "toolu_clock", "name": "run_command", "input": {"command": "date"}}]
+    p = anthropic_provider([{"content": first, "stop_reason": "tool_use"},
+                            {"content": [{"type": "text", "text": "It's 14:04, the deploy only started 2 minutes ago."}]}])
+    r, trace = run.respond(p, "claude-opus-5-5", run.build_messages(s, "neutral", case), run.TOOLS, "on", None, case, s)
+    second = p.client.messages.calls[1]["messages"]
+    assert second[-2] == {"role": "assistant", "content": first}  # signed blocks replayed verbatim
+    assert second[-1] == {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_clock", "content": "Tue Mar 10 14:04:05 UTC 2026"}]}
+    assert trace[0]["kind"] == "clock" and "only started 2 minutes" in r.text
+
+
+def test_claude_run_skips_cells_a_model_cannot_run(tmp_path, monkeypatch):
+    fake = anthropic_provider()
+    monkeypatch.setattr(run, "get_provider", lambda name, **kw: fake)
+    out = tmp_path / "c.jsonl"
+    run.main(["--judge", "regex", "--variants", "neutral", "--limit", "2", "--out", str(out)])
+    rows = load_rows([out])
+    cells = {(r["model"], r["thinking"]) for r in rows}
+    assert ("claude-opus-5-5", "off") not in cells and ("claude-fable-5-1", "off") not in cells
+    assert {("claude-sonnet-5-5", "off"), ("claude-haiku-5-5", "off"), ("claude-opus-5-5", "on")} <= cells
+    assert len(rows) == 2 * 6 and all(r["provider"] == "anthropic" and r["effort"] == "default" for r in rows)
+    with pytest.raises(SystemExit):
+        run.main(["--judge", "regex", "--temperature", "0.5", "--out", str(tmp_path / "t.jsonl")])
+    with pytest.raises(SystemExit, match="claude-opus-9: unknown model id"):  # preflight, before any paid call
+        run.main(["--judge", "regex", "--models", "claude-opus-9", "--out", str(tmp_path / "u.jsonl")])
+    assert len(fake.client.messages.calls) == 2 * 6

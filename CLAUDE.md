@@ -29,19 +29,19 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 4. **Cases are built by swapping messages between sessions** (`wwb/build_cases.py`): a message that is native to session A is injected into session B. This reproduces real mix-ups. Plain swaps proved easy to game by word overlap, so there are three more probe families with twin controls: `unasked_answer` (minimal pairs), `paste` and `same_words` (see DESIGN.md, Probe families). Next step: do this with real Claude Code transcripts (see Next steps).
 5. **System prompt is an experimental variable** (`wwb/prompts.py`): `neutral`, `autonomous` (typical coding-agent prompt), `non_sequitur_check` (explicit instruction to stop on non-sequiturs). Interpretation: if `non_sequitur_check` closes the gap, it's mostly harness; if models still miss with it, it's training.
 6. **Thinking on/off is a variable.** The scripted history has no thinking; only the probe response is generated with reasoning on or off. Hypothesis: thinking helps a bit, but the bias toward acting still wins.
-7. **Models via OpenRouter** (one key, many models). Zero runtime dependencies (stdlib `urllib`), so it runs anywhere.
+7. **Models under test run on the Claude API** (official SDK, an optional extra: `pip install -e '.[anthropic]'`); the first run covers the latest Claude models only (Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5). The judge stays on OpenRouter, and `--provider openrouter` still runs other vendors' models. The core is stdlib only. No refusal fallbacks: a row must come from the model it names, so a safety decline is recorded (`stop_reason: refusal`) instead. Thinking off isn't available on Fable 5.1 or Opus 5.5; those cells are skipped.
 8. **Single-step eval:** we generate exactly one assistant response to the probe (the time family is the exception: the harness answers clock checks and lets the model continue). Tool calls are detected mechanically; text responses are labeled by a judge model, by default TypeSafe's Jev (`typesafe/jev-1.13`) via OpenRouter's Decisions API, with a regex fallback for offline runs and judge failures.
 9. **Time family** (`data/sessions/time/`, `wwb/clock.py`): messages carry no timestamps the model can see, so the question is whether an agent looks at the clock (`date`) when timing matters, and acts on it. Each case has a hidden send time that the harness returns for `date`; the two cases of a pair look identical to the model. Scored separately: checked the clock, and flagged when the timing doesn't fit. Abdiel's framing: not seeing time is the harness's fault; not looking when you can is the agent's.
 
 ## Current state
 
 - Scaffold complete and tested with the mock provider (`python -m pytest`, `python -m wwb.run --provider mock`).
-- **Not yet run against real models.** Needs `OPENROUTER_API_KEY`.
+- **Not yet run against real models.** Needs `ANTHROPIC_API_KEY` (models) and `OPENROUTER_API_KEY` (Jev judge).
 - Seed dataset is small and synthetic: 5 sessions (3 agentic coding, 2 chat), 134 cases (88 swaps plus 46 in the newer families) plus 14 time cases. Enough to validate the pipeline, NOT enough for conclusions.
 
 ## Next steps (suggested order)
 
-1. Verify the OpenRouter `reasoning` parameter per model (`wwb/providers.py`, marked TODO). Some models ignore `enabled: false`; some always reason. Also check that time-family clock rounds work with thinking on (`reasoning_details` is passed back).
+1. Smoke-test the Claude API provider (`--limit 5`): no 400s on the thinking settings, and time-family clock rounds succeed with thinking on (the assistant's blocks are replayed verbatim). For OpenRouter models, verify the `reasoning` parameter per model (`wwb/providers.py`, marked TODO).
 2. Verify the Jev judge against the live Decisions API (`OpenRouterProvider.decide`, `jev_label`). The request and response shapes were written from public docs and not yet tested live.
 3. First real run on 3 to 5 models, all variants, thinking on/off. Spot-check ~30 judge labels by hand before trusting numbers.
 4. Grow the dataset. Best source: **real transcripts** from Abdiel's own Claude Code sessions (`~/.claude/projects/**/*.jsonl`). Write a converter that turns them into `data/sessions/*.json` and lets the swap generator do the rest. Strip secrets first.
