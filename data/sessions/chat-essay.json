@@ -17,8 +17,8 @@
     {"id": "ess-c1", "text": "make the intro punchier, use the calendar idea you mentioned"},
     {"id": "ess-c2", "text": "add a short example to section 3 about replacing the daily standup with a written thread"},
     {"id": "ess-c3", "text": "rewrite the conclusion so it ends with the one-month experiment"},
-    {"id": "ess-c4", "text": "suggest 5 alternative titles, less clickbaity"},
-    {"id": "ess-c5", "text": "the tone feels a bit corporate, loosen it up"},
+    {"id": "ess-c4", "text": "suggest 5 alternative titles for the post, less clickbaity"},
+    {"id": "ess-c5", "text": "the post's tone feels a bit corporate, loosen it up"},
     {"id": "ess-c6", "text": "give me the full post with all the edits so far"}
   ],
   "switches": [

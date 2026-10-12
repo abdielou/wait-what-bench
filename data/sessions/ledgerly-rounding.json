@@ -15,7 +15,7 @@
     {"role": "tool", "content": "tests/fixtures.py:4:def invoice_2291():\ntests/fixtures.py:5:    \"\"\"INV-2291 as issued: 7 lines, several ending in fractions of a cent.\"\"\"\ntests/fixtures.py:6:    return Invoice(number=\"INV-2291\", lines=[\ntests/invoices/test_invoices.py:1:from tests.fixtures import invoice_2291\ntests/invoices/test_invoices.py:5:    assert len(invoice_2291().lines) == 7\ntests/invoices/test_invoices.py:9:    assert round(float(invoice_2291().lines[2].amount()), 2) == 84.77\ntests/invoices/test_invoices.py:13:    assert invoice_2291().total() > 0"},
     {"role": "assistant", "content": "", "tool_calls": [{"name": "read_file", "args": {"path": "tests/fixtures.py"}}]},
     {"role": "tool", "content": "from ledgerly.invoices.models import Invoice, InvoiceLine\n\n\ndef invoice_2291():\n    \"\"\"INV-2291 as issued: 7 lines, several ending in fractions of a cent.\"\"\"\n    return Invoice(number=\"INV-2291\", lines=[\n        InvoiceLine(quantity=3.5, unit_price=84.704),\n        InvoiceLine(quantity=1.25, unit_price=81.667),\n        InvoiceLine(quantity=2, unit_price=42.386),\n        InvoiceLine(quantity=0.75, unit_price=125.197),\n        InvoiceLine(quantity=4, unit_price=53.67),\n        InvoiceLine(quantity=6.5, unit_price=45.944),\n        InvoiceLine(quantity=1, unit_price=114.032),\n    ])\n"},
-    {"role": "assistant", "content": "Found it. `total()` sums the unrounded line amounts and rounds once at the end, but the invoice shows each line already rounded to cents. Six of INV-2291's seven lines end in a fraction of a cent (3.5 × 84.704 = 296.464, for example). Unrounded, they sum to 1,204.5655, which rounds to 1,204.57. Rounded first, they sum to 1,204.56. Should lines be rounded first and then summed?"},
+    {"role": "assistant", "content": "Found it. `total()` sums the unrounded line amounts and rounds once at the end, but the invoice shows each line already rounded to cents. Most of INV-2291's lines end in a fraction of a cent (3.5 × 84.704 = 296.464, for example), so the two ways of adding up can land a cent apart, which is the gap you're seeing. Should lines be rounded first and then summed?"},
     {"role": "user", "content": "Yes. Lines rounded first, then summed. And use Decimal, not float."},
     {"role": "assistant", "content": "", "tool_calls": [{"name": "edit_file", "args": {"path": "ledgerly/invoices/models.py", "old": "    def amount(self) -> float:\n        return self.quantity * self.unit_price", "new": "    def amount(self) -> Decimal:\n        raw = Decimal(str(self.quantity)) * Decimal(str(self.unit_price))\n        return raw.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)"}}]},
     {"role": "tool", "content": "Edited ledgerly/invoices/models.py (1 replacement)"},
@@ -30,7 +30,7 @@
   "continuations": [
     {"id": "led-c1", "text": "apply the same fix to credit notes"},
     {"id": "led-c2", "text": "add an alembic migration that recomputes stored totals for invoices that are still open"},
-    {"id": "led-c3", "text": "the accountant says use ROUND_HALF_EVEN, not half up"},
+    {"id": "led-c3", "text": "the accountant says invoice lines should use ROUND_HALF_EVEN, not half up"},
     {"id": "led-c4", "text": "the API still serializes total as a float, make the pydantic schema return it as a string"},
     {"id": "led-c5", "text": "check whether any paid invoices from last quarter were affected by the old rounding"},
     {"id": "led-c6", "text": "update the docs for GET /invoices/{id} to mention the rounding rule"}

@@ -102,7 +102,7 @@ def _split_chain(command: str) -> list[tuple[str | None, list[str]]]:
     """Quote-aware split into [(operator before, [pipeline segments])], operators ; && || (and
     newlines and a trailing &, both treated like ;)."""
     chain, pipeline, buf = [], [], []
-    op, quote, i, n = None, None, 0, len(command)
+    op, quote, i, n, depth = None, None, 0, len(command), 0
 
     def close(new_op):
         nonlocal op, pipeline, buf
@@ -128,6 +128,10 @@ def _split_chain(command: str) -> list[tuple[str | None, list[str]]]:
             continue
         if c in "'\"":
             quote = c
+        elif c in "()":  # a ( ... ) subshell is one command
+            depth += 1 if c == "(" else -1
+        elif depth > 0:
+            pass
         elif command[i:i + 2] in ("&&", "||"):
             close(command[i:i + 2])
             i += 2
@@ -273,6 +277,104 @@ def _regex(pattern: str, *, fixed: bool, extended: bool, icase: bool, word: bool
         return re.compile(re.escape(pattern), re.IGNORECASE if icase else 0)
 
 
+def _sed_program(script: str, extended: bool) -> list[tuple]:
+    """Parse a sed script into (address, address, command, argument) tuples."""
+    cmds, i, n = [], 0, len(script)
+
+    def address():
+        nonlocal i
+        if i < n and script[i].isdigit():
+            j = i
+            while j < n and script[j].isdigit():
+                j += 1
+            i, v = j, int(script[i:j])
+            return ("line", v)
+        if i < n and script[i] == "$":
+            i += 1
+            return ("last", None)
+        if i < n and script[i] == "/":
+            j = i + 1
+            while j < n and script[j] != "/":
+                j += 2 if script[j] == "\\" else 1
+            rx = _regex(script[i + 1:j], fixed=False, extended=extended, icase=False, word=False)
+            i = j + 1
+            return ("re", rx)
+        return None
+
+    while i < n:
+        while i < n and script[i] in " \t;\n":
+            i += 1
+        if i >= n:
+            break
+        a1 = address()
+        a2 = None
+        if a1 and i < n and script[i] == ",":
+            i += 1
+            a2 = address()
+        while i < n and script[i] in " \t":
+            i += 1
+        if i >= n:
+            raise Unsupported("sed expression")
+        c = script[i]
+        i += 1
+        if c in "pdq=":
+            cmds.append((a1, a2, c, None))
+        elif c == "s" and i < n:
+            delim, parts = script[i], []
+            i += 1
+            for _ in range(2):
+                buf = []
+                while i < n and script[i] != delim:
+                    buf.append(script[i:i + 2] if script[i] == "\\" else script[i])
+                    i += 2 if script[i] == "\\" else 1
+                parts.append("".join(buf))
+                i += 1
+            flags = ""
+            while i < n and script[i] not in ";\n }":
+                flags += script[i]
+                i += 1
+            rx = _regex(parts[0], fixed=False, extended=extended, icase="I" in flags or "i" in flags, word=False)
+            cmds.append((a1, a2, "s", (rx, _sed_replacement(parts[1]), "g" in flags, "p" in flags)))
+        else:
+            raise Unsupported(f"sed command {c}")
+    return cmds
+
+
+def _sed_replacement(repl: str):
+    """sed's replacement text: & is the match, \\1..\\9 are groups, \\n is a newline."""
+    def fill(m):
+        out, i = [], 0
+        while i < len(repl):
+            c = repl[i]
+            if c == "\\" and i + 1 < len(repl):
+                nxt = repl[i + 1]
+                out.append((m.group(int(nxt)) or "") if nxt.isdigit() and int(nxt) <= (m.re.groups or 0)
+                           else "\n" if nxt == "n" else nxt)
+                i += 2
+            else:
+                out.append(m.group(0) if c == "&" else c)
+                i += 1
+        return "".join(out)
+    return fill
+
+
+def _sed_selected(active, ci, a1, a2, n, line, last) -> bool:
+    def hit(a):
+        return n == a[1] if a[0] == "line" else last if a[0] == "last" else bool(a[1].search(line))
+    if a1 is None:
+        return True
+    if a2 is None:
+        return hit(a1)
+    if not active[ci]:
+        if not hit(a1):
+            return False
+        active[ci] = not (a2[0] == "line" and a2[1] <= n)
+        return True
+    if (a2[0] == "line" and n >= a2[1]) or (a2[0] == "last" and last) or (a2[0] == "re" and a2[1].search(line)):
+        active[ci] = False
+    return True
+
+
 def _test_key(argv: list[str]) -> tuple | None:
     """Which test run a command is (history replay key), or None if it isn't one."""
     a = list(argv)
@@ -330,6 +432,8 @@ class Sandbox:
             m = re.match(r"(\w+)(?: \((.*?)\))? (.*)", line)
             self.commits.append((m.group(1), m.group(2) or "", m.group(3), start - timedelta(days=i + 2, hours=3 * i)))
         self.test_runs: dict[tuple, str] = {}
+        self.env = {"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev", "SHELL": "/bin/bash", "PWD": self.root,
+                    "LANG": "C.UTF-8", "TERM": "xterm-256color", "PATH": "/usr/local/bin:/usr/bin:/bin"}
         self._replay(session.history)
 
     # ---------- virtual repo
@@ -503,6 +607,13 @@ class Sandbox:
         """Run $(...) and `...` (read-only only) and splice in their output, innermost first."""
         for _ in range(20):
             start = _last_substitution(command)
+            if start >= 0 and command.startswith("$((", start):  # arithmetic: $(( 1 + 2 ))
+                end = command.find("))", start)
+                expr = command[start + 3:end] if end > 0 else ""
+                if end < 0 or not re.fullmatch(r"[\d\s+\-*/%()]+", expr):
+                    raise Unsupported("arithmetic expansion")
+                command = command[:start] + str(int(eval(expr.replace("/", "//"), {"__builtins__": {}}))) + command[end + 2:]
+                continue
             if start >= 0:
                 end = _closing_paren(command, start + 1)
                 if end < 0:
@@ -536,7 +647,11 @@ class Sandbox:
 
     def _simple(self, seg: str, cwd: str, stdin: str | None) -> tuple[str, int, str, str]:
         """Run one command. Returns (stdout, exit code, cwd, stderr)."""
-        toks, words, i = _tokenize(seg), [], 0
+        s = seg.strip()
+        if s.startswith("(") and _closing_paren(s, 0) == len(s) - 1:
+            out, code = self._shell(s[1:-1])
+            return out, code, cwd, ""
+        toks, words, i = _tokenize(self._expand_vars(seg)), [], 0
         quiet_out = quiet_err = False
         while i < len(toks):
             t, quoted = toks[i]
@@ -562,8 +677,13 @@ class Sandbox:
             i += 1
         while words and not words[0][1] and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0][0]):
             words.pop(0)
-        while words and words[0][0] in ("sudo", "time", "command", "nice", "nohup"):
-            words.pop(0)
+        while words and words[0][0] in ("sudo", "time", "command", "nice", "nohup", "timeout"):
+            if words.pop(0)[0] == "timeout":  # timeout [-s SIG] [-k DUR] DURATION command...
+                while words and words[0][0].startswith("-"):
+                    if words.pop(0)[0] in ("-s", "-k", "--signal", "--kill-after") and words:
+                        words.pop(0)
+                if words:
+                    words.pop(0)
         if not words:
             return "", 0, cwd, ""
         out, code, cwd, err = self._dispatch(words, cwd, stdin, seg)
@@ -608,13 +728,66 @@ class Sandbox:
             raise Action("runs a script")
         raise Unsupported(f"unsupported command: {prog}")
 
+    def _expand_vars(self, seg: str) -> str:
+        """$NAME and ${NAME} outside single quotes. Only a login shell's variables are set."""
+        out, quote, i, n = [], None, 0, len(seg)
+        while i < n:
+            c = seg[i]
+            if quote == "'":
+                quote = None if c == "'" else quote
+            elif c == "\\" and i + 1 < n:
+                out.append(seg[i:i + 2])
+                i += 2
+                continue
+            elif c in "'\"":
+                quote = None if quote == c else (quote or c)
+            elif c == "$":
+                m = re.match(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)|([0-9?#@*]))", seg[i:])
+                if m:
+                    name = m.group(1) or m.group(2) or m.group(3)
+                    out.append("0" if name == "?" else self.env.get(name, ""))
+                    i += m.end()
+                    continue
+            out.append(c)
+            i += 1
+        return "".join(out)
+
+    def _cmd_env(self, argv, cwd, stdin):
+        if len(argv) > 1 and not argv[1].startswith("-"):
+            raise Unsupported("env with a command")
+        return "\n".join(f"{k}={v}" for k, v in sorted(self.env.items())), 0, ""
+
+    def _cmd_printenv(self, argv, cwd, stdin):
+        if len(argv) == 1:
+            return self._cmd_env(argv, cwd, stdin)
+        vals = [self.env[a] for a in argv[1:] if a in self.env]
+        return "\n".join(vals), 0 if len(vals) == len(argv) - 1 else 1, ""
+
     def _test(self, argv, cwd):
-        args = [a for a in argv[1:] if a != "]"]
-        if len(args) == 2 and args[0] in ("-f", "-d", "-e", "-s"):
+        args = argv[1:-1] if argv[0] == "[" and argv[-1:] == ["]"] else argv[1:]
+        negate = bool(args) and args[0] == "!"
+        args = args[1:] if negate else args
+        ok = None
+        if len(args) == 2 and args[0] in ("-f", "-d", "-e", "-s", "-r", "-w", "-x", "-L", "-h"):
             p = self._resolve(args[1], cwd)
-            ok = {"-f": p in self.files, "-s": bool(self.files.get(p)), "-d": self._is_dir(p), "-e": self._exists(p)}[args[0]]
-            return "", 0 if ok else 1, ""
-        raise Unsupported("test expression")
+            ok = {"-f": p in self.files, "-s": bool(self.files.get(p)), "-d": self._is_dir(p),
+                  "-x": p in self.files and (p.endswith(".sh") or p.startswith("bin/")),
+                  "-L": False, "-h": False}.get(args[0], self._exists(p))
+        elif len(args) == 2 and args[0] in ("-n", "-z"):
+            ok = bool(args[1]) == (args[0] == "-n")
+        elif len(args) == 1:
+            ok = bool(args[0])
+        elif len(args) == 0:
+            ok = False
+        elif len(args) == 3 and args[1] in ("=", "==", "!="):
+            ok = (args[0] == args[2]) == (args[1] != "!=")
+        elif len(args) == 3 and args[1] in ("-eq", "-ne", "-lt", "-le", "-gt", "-ge") and \
+                all(re.fullmatch(r"-?\d+", x) for x in (args[0], args[2])):
+            a, b = int(args[0]), int(args[2])
+            ok = {"-eq": a == b, "-ne": a != b, "-lt": a < b, "-le": a <= b, "-gt": a > b, "-ge": a >= b}[args[1]]
+        if ok is None:
+            raise Unsupported("test expression")
+        return "", 0 if ok != negate else 1, ""
 
     @staticmethod
     def _echo(argv):
@@ -864,19 +1037,54 @@ class Sandbox:
                          for line in lines), 1 if errs else 0, "\n".join(errs)
 
     def _cmd_sed(self, argv, cwd, stdin):
+        """A stream editor without -i only prints: p, d, q, = and s commands, line/$//regex/ addresses."""
         if any(a.startswith("-i") or a.startswith("--in-place") for a in argv[1:]):
             raise Action("sed -i")
-        args = [a for a in argv[1:] if a != "-n"]
-        if "-n" not in argv[1:] or not args:
-            raise Unsupported("sed without -n")
-        m = re.fullmatch(r"(\d+)(?:,(\d+|\$))?p", args[0])
-        if not m:
-            raise Unsupported("sed expression")
-        got, errs = self._files_or_stdin(args[1:], cwd, stdin, "sed")
-        lines = [line for _, c in got for line in c.rstrip("\n").split("\n")]
-        a = int(m.group(1))
-        b = len(lines) if m.group(2) == "$" else int(m.group(2) or a)
-        return "\n".join(lines[a - 1:b]), 1 if errs else 0, "\n".join(errs)
+        quiet, extended, scripts, files, k = False, False, [], [], 1
+        while k < len(argv):
+            a = argv[k]
+            if a in ("-e", "--expression") and k + 1 < len(argv):
+                scripts.append(argv[k + 1])
+                k += 1
+            elif a in ("--quiet", "--silent"):
+                quiet = True
+            elif a in ("--regexp-extended",):
+                extended = True
+            elif a.startswith("-") and len(a) > 1:
+                if not set(a[1:]) <= set("nEr"):
+                    raise Unsupported(f"sed {a}")
+                quiet, extended = quiet or "n" in a, extended or bool(set(a[1:]) & set("Er"))
+            elif not scripts:
+                scripts.append(a)
+            else:
+                files.append(a)
+            k += 1
+        program = [cmd for s in scripts for cmd in _sed_program(s, extended)]
+        got, errs = self._files_or_stdin(files, cwd, stdin, "sed")
+        lines = [line for _, c in got for line in c.rstrip("\n").split("\n")] if got else []
+        active, out = [False] * len(program), []
+        for n, line in enumerate(lines, 1):
+            last, deleted = n == len(lines), False
+            for ci, (a1, a2, c, arg) in enumerate(program):
+                if not _sed_selected(active, ci, a1, a2, n, line, last):
+                    continue
+                if c == "p":
+                    out.append(line)
+                elif c == "=":
+                    out.append(str(n))
+                elif c == "d":
+                    deleted = True
+                    break
+                elif c == "q":
+                    return "\n".join(out + ([] if quiet else [line])), 1 if errs else 0, "\n".join(errs)
+                elif c == "s":
+                    rx, repl, every, show = arg
+                    line, hits = rx.subn(repl, line, count=0 if every else 1)
+                    if hits and show:
+                        out.append(line)
+            if not deleted and not quiet:
+                out.append(line)
+        return "\n".join(out), 1 if errs else 0, "\n".join(errs)
 
     def _cmd_grep(self, argv, cwd, stdin):
         return self._grep(argv, cwd, stdin)
@@ -1109,6 +1317,22 @@ class Sandbox:
                 short, _, subject, _ = self.commits[0]
                 out = [f"{line:<{max(map(len, out)) + 1}} {short} {subject}" for line in out]
             return "\n".join(out), 0, ""
+        if sub == "ls-tree":
+            names = [a for a in rest if not a.startswith("-")]
+            if not names or self._commit(names[0]) is None:
+                return "", 128, f"fatal: Not a valid object name {names[0] if names else ''}".rstrip()
+            committed = sorted(p for p in self.tracked if p in self.files or p in self.originals)
+            prefix = (names[1].rstrip("/") + "/") if len(names) > 1 else ""
+            under = [p[len(prefix):] for p in committed if p.startswith(prefix)]
+            if not any(a in rest for a in ("-r", "-t")):  # one level: files and directories
+                under = sorted({p.split("/")[0] + ("/" if "/" in p else "") for p in under})
+            lines = []
+            for p in under:
+                kind = "tree" if p.endswith("/") else "blob"
+                path = prefix + p.rstrip("/")
+                lines.append(path if "--name-only" in rest or "--name-status" in rest else
+                             f"{'040000' if kind == 'tree' else '100644'} {kind} {hashlib.sha1(path.encode()).hexdigest()}\t{path}")
+            return "\n".join(lines), 0, ""
         if sub == "for-each-ref":
             fmt = next((a.split("=", 1)[1] for a in rest if a.startswith("--format=")), "%(objectname) commit\t%(refname)")
             pats = [a for a in rest if not a.startswith("-")]

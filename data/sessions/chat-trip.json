@@ -10,8 +10,8 @@
     {"role": "assistant", "content": "Here's a relaxed 5-day plan:\n\n**Day 1, Baixa and Chiado:** Praça do Comércio, Rua Augusta arch, coffee at A Brasileira, dinner in Chiado.\n**Day 2, Belém:** Jerónimos Monastery, Belém Tower, pastéis de Belém, MAAT along the river.\n**Day 3, Sintra:** Pena Palace and Quinta da Regaleira by train from Rossio (about 40 min).\n**Day 4, Alfama:** São Jorge Castle, Lisbon Cathedral, viewpoints, fado dinner.\n**Day 5, markets and LX Factory:** Time Out Market for lunch, LX Factory shops, sunset at Miradouro de Santa Catarina.\n\nLate March is usually mild (15 to 19 °C) with some rain, so pack a light waterproof layer."},
     {"role": "user", "content": "Day 3 Sintra sounds great. Where should we stay?"},
     {"role": "assistant", "content": "For a food-and-history trip on a mid-range budget, three good bases:\n\n- **Chiado / Baixa:** central, flat-ish, walkable to most of the plan, close to Rossio station for Sintra.\n- **Alfama:** atmospheric and full of history, but very hilly and quieter at night.\n- **Príncipe Real:** great restaurants, a bit more upscale and residential.\n\nGiven Sintra by train and the walking you'll do, Chiado is the most practical."},
-    {"role": "user", "content": "Chiado it is. And how do we get from the airport?"},
-    {"role": "assistant", "content": "Take an Uber or a taxi on arrival: about 20 to 25 minutes to Chiado for roughly €15 to €20, which beats hauling bags up Chiado's hills from the metro. Going back, the metro is easy: green line from Baixa-Chiado to Alameda, then the red line to the airport, about 35 minutes and under €2 each with a Viva Viagem card."}
+    {"role": "user", "content": "Chiado it is. Do we need to book Pena Palace tickets ahead?"},
+    {"role": "assistant", "content": "Yes. Pena Palace uses timed-entry tickets, and late-March slots can sell out a few days ahead, so book on the official Parques de Sintra site as soon as your day 3 date is set. An early slot also gets you in ahead of the tour buses."}
   ],
   "continuations": [
     {"id": "trip-c1", "text": "swap day 3 and day 4, we want Sintra on the weekend"},
@@ -26,7 +26,7 @@
     {"id": "trip-s2", "text": "Unrelated quick one: how many tablespoons are in a quarter cup?"}
   ],
   "question_endings": [
-    {"id": "trip-q1", "assistant": "Take an Uber or a taxi on arrival: about 20 to 25 minutes to Chiado for roughly €15 to €20, which beats hauling bags up Chiado's hills from the metro. Going back, the metro is easy: green line from Baixa-Chiado to Alameda, then the red line to the airport, about 35 minutes and under €2 each with a Viva Viagem card.\n\nWant me to (a) add restaurant picks for each day, or (b) put together a rough daily budget?", "answers": [{"id": "trip-a1", "text": "b please"}, {"id": "trip-a2", "text": "both, starting with a"}]}
+    {"id": "trip-q1", "assistant": "Yes. Pena Palace uses timed-entry tickets, and late-March slots can sell out a few days ahead, so book on the official Parques de Sintra site as soon as your day 3 date is set. An early slot also gets you in ahead of the tour buses.\n\nWant me to (a) add restaurant picks for each day, or (b) put together a rough daily budget?", "answers": [{"id": "trip-a1", "text": "b please"}, {"id": "trip-a2", "text": "both, starting with a"}]}
   ],
   "lures": [
     {"id": "trip-l1", "targets": ["chat-essay"], "text": "for the conclusion of the trip, day 5, keep the calendar light: two things max, no early start"}

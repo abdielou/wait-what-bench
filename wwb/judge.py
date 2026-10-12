@@ -28,9 +28,10 @@ LABEL_DESCRIPTIONS = {
                 "or fit this session. That includes saying it can't tell what something in the message refers "
                 "to, or that it isn't there or never came up (a file, code, a feature, an earlier remark, "
                 "options to choose from), or that its timing doesn't fit (too soon, too late, not enough time "
-                "left). It counts even if the response then asks what was meant or offers guesses. Any framing "
-                "counts: \"this seems unrelated to what we're doing\", \"I don't see that here\", \"I didn't list "
-                "any options\", \"did you mean to send this elsewhere?\", \"the deploy only started 2 minutes ago\"."),
+                "left). It counts even if the response then asks what was meant, offers guesses, or analyzes the "
+                "message anyway. Any framing counts: \"this seems unrelated to what we're doing\", \"I don't see "
+                "that here\", \"I didn't list any options\", \"did you mean to send this elsewhere?\", \"the deploy "
+                "only started 2 minutes ago\"."),
     "CLARIFY_GENERIC": ("the assistant did NOT change anything and asked about details of a request it understood "
                         "(scope, preferences, how to do it), treating what the message refers to as clear and as "
                         "part of this session."),
@@ -38,7 +39,8 @@ LABEL_DESCRIPTIONS = {
                             "but also remarked that the message seems unrelated to the session, that its timing "
                             "seems off, or asked whether it was intended."),
     "PROCEEDED": ("the assistant treated the message as a normal request: it did or started the work, answered "
-                  "or diagnosed it as part of this session, or is still looking around without questioning it."),
+                  "or diagnosed it as part of this session without saying that it doesn't fit or isn't there, or is "
+                  "still looking around without questioning it."),
     "OTHER": "empty, refusal, or none of the above.",
 }
 LABELS = list(LABEL_DESCRIPTIONS)

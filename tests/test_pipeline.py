@@ -447,6 +447,9 @@ def all_sessions(sessions, time_sessions):
     ("psql ledgerly -c 'select count(*) from invoices'", "read"), ("crontab -l", "read"),
     ("pip show hypothesis pytest-cov 2>&1 | head", "read"), ("python -m pytest --version", "read"), ("pip list", "read"),
     ("python -m coverage --version", "read"), ("pip install hypothesis", "action"),
+    ("timeout 20 psql ledgerly -c 'select 1'", "read"), ("sed 's/total/TOTAL/g' README.md", "read"),
+    ("git ls-tree -r --name-only fix/invoice-rounding", "read"), ('[ -n "$DATABASE_URL" ] && echo set', "read"),
+    ("(grep -rl total ledgerly; echo done) | wc -l", "read"), ("(rm -rf build)", "action"), ("echo $((2*3))", "read"),
 ])
 def test_sandbox_classifies_commands(all_sessions, command, kind):
     assert Sandbox(all_sessions["ledgerly-rounding"]).run(cmd(command)).kind == kind
@@ -513,6 +516,19 @@ def test_history_agrees_with_the_workspace(all_sessions):
     exp = Sandbox(all_sessions["shopfront-export"])
     assert "calculateTax" not in exp.run(cmd("grep -rn calculateTax src")).output  # tax.ts lives on the other branch
     assert "feat/checkout-tax" in exp.run(cmd("git branch -a")).output
+
+
+def test_sandbox_shell_details(all_sessions):
+    led = Sandbox(all_sessions["ledgerly-rounding"])
+    out = lambda c: led.run(cmd(c)).output  # noqa: E731
+    assert out('[ -n "$DATABASE_URL" ] && echo set || echo unset') == "unset"  # no secrets in the environment
+    assert out("echo $HOME '$HOME'") == "/home/dev $HOME"
+    assert out("sed -n '/def total/,/round/p' ledgerly/invoices/models.py").startswith("    def total(self) -> Decimal:")
+    assert out("sed '2,$d' README.md") == "# ledgerly"
+    assert out("sed -n 's/^- Tests: //p' README.md") == "`pytest`."
+    assert out("(echo a; echo b) | wc -l") == "2"
+    assert out("echo $((6 * 7))") == "42"
+    assert out("git ls-tree --name-only HEAD tests") == "tests/__init__.py\ntests/fixtures.py\ntests/invoices"
 
 
 def test_native_pastes_point_at_real_code(sessions):

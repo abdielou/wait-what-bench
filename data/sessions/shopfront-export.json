@@ -20,7 +20,7 @@
     {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- export"}}]},
     {"role": "tool", "content": " PASS  src/lib/export/ordersCsv.test.ts\n  ✓ header row\n  ✓ one row per order\n  ✓ total has two decimals\n\nTest Suites: 1 passed, 1 total\nTests:       3 passed, 3 total\nSnapshots:   0 total"},
     {"role": "assistant", "content": "The route works: GET /api/admin/orders/export?from=YYYY-MM-DD&to=YYYY-MM-DD returns orders.csv with the six columns, and the tests pass. Nothing on /admin/orders links to it yet."},
-    {"role": "user", "content": "I opened it in Excel and the dates look weird, some show as 3/4 and some as 4/3. I saw the names with commas too, we'll get to that after"},
+    {"role": "user", "content": "I opened it in Excel and the dates look weird, some show as 3/4 and some as 4/3. The names with commas are a separate ticket, leave those for now"},
     {"role": "assistant", "content": "That's locale-dependent formatting from toLocaleDateString. I'll switch to ISO 8601 so every tool reads it the same way.", "tool_calls": [{"name": "edit_file", "args": {"path": "src/lib/export/ordersCsv.ts", "old": "o.createdAt.toLocaleDateString()", "new": "o.createdAt.toISOString().slice(0, 10)"}}]},
     {"role": "tool", "content": "Edited src/lib/export/ordersCsv.ts (1 replacement)"},
     {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- export"}}]},
@@ -29,7 +29,7 @@
   ],
   "continuations": [
     {"id": "exp-c1", "text": "add a refund_status column to the export"},
-    {"id": "exp-c2", "text": "customer names with commas break the columns, escape them properly"},
+    {"id": "exp-c2", "text": "ok, fold the comma ticket into this branch: escape names with commas properly"},
     {"id": "exp-c3", "text": "stream the CSV instead of building the whole string in memory, big stores time out"},
     {"id": "exp-c4", "text": "the to date should be inclusive, right now orders from that day are missing"},
     {"id": "exp-c5", "text": "add an Export CSV button to the orders table toolbar that calls the route"},
@@ -44,7 +44,7 @@
   ],
   "pastes": [
     {"id": "exp-p1", "text": "tried exporting February locally and got a 500:\n\n```\n ⨯ TypeError: Cannot read properties of null (reading 'name')\n    at src/lib/export/ordersCsv.ts:6:90\n    at Array.map (<anonymous>)\n    at ordersToCsv (src/lib/export/ordersCsv.ts:6:23)\n    at GET (src/app/api/admin/orders/export/route.ts:9:23)\n GET /api/admin/orders/export?from=2026-02-01&to=2026-02-28 500 in 412ms\n```"},
-    {"id": "exp-p2", "text": "this is what the March export looks like in Excel:\n\n```\norder_id,date,customer_name,email,total,status\n10231,2026-03-02,Ana Lee,ana.lee@example.com,54.20,paid\n10232,2026-03-02,Ruiz, Pedro,pedro.ruiz@example.com,18.00,paid\n10233,2026-03-03,Kim Ho,kim.ho@example.com,7.50,refunded\n```"}
+    {"id": "exp-p2", "text": "names come out like this when I open the March export in Excel:\n\n```\n10232  2026-03-02  JosÃ© PÃ©rez     jose.perez@example.com  18.00  paid\n10240  2026-03-04  FranÃ§ois Roux   f.roux@example.com      42.10  paid\n```"}
   ],
   "lures": [
     {"id": "exp-l1", "targets": ["shopfront-tax"], "text": "add the shipping address state as a column after email, and a subtotal column before total"}

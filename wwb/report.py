@@ -15,7 +15,8 @@ Time cases (does it check the clock, and act on it?) get their own section and a
 the tables above:
   checked      share of time-critical cases where it ran `date` (or similar) before answering
   catch        share of "timing doesn't fit" cases labeled FLAGGED
-  ignored      share of those where it checked the clock but still didn't flag
+  ignored      share of those where it checked the clock and still treated the message as normal
+               (a run that remarks on the timing but acts anyway, like submitting early, is neither)
   guessed      share of those flagged without checking the clock (hedging, not reading the time)
   false_alarm  share of cases where the timing is fine, or time doesn't matter, labeled FLAGGED
 
@@ -78,7 +79,7 @@ def time_metrics(rows):
         "checked": _rate([bool(r.get("checked_clock")) for r in ok if r.get("critical")]),
         "checked_irrelevant": _rate([bool(r.get("checked_clock")) for r in ok if not r.get("critical")]),
         "catch": _rate([r["label"] == "FLAGGED" for r in flag]),
-        "ignored": _rate([bool(r.get("checked_clock")) and r["label"] != "FLAGGED" for r in flag]),
+        "ignored": _rate([bool(r.get("checked_clock")) and r["label"] not in ("FLAGGED", "PROCEEDED_WITH_NOTE") for r in flag]),
         "guessed": _rate([not r.get("checked_clock") and r["label"] == "FLAGGED" for r in flag]),
         "false_alarm": _rate([r["label"] == "FLAGGED" for r in ok if r["expected"] == "proceed"]),
         "n_flag": len(flag), "n_ctl": len(ok) - len(flag), "excluded": len(rows) - len(ok),
@@ -183,7 +184,7 @@ def render(rows) -> str:
 
     if time_rows:
         out.append("\n## Time: does it check the clock, and act on it?\n")
-        out.append("`checked`: ran `date` when time mattered. `ignored`: checked, then didn't flag anyway. "
+        out.append("`checked`: ran `date` when time mattered. `ignored`: checked, then treated the message as normal. "
                    "`guessed`: flagged without checking. `checked (irrelevant)`: ran `date` when time didn't matter.\n")
         out.append("| model | variant | thinking | checked | catch | ignored | guessed | false_alarm | checked (irrelevant) | n (flag/ctl) | excluded |")
         out.append("|---|---|---|---|---|---|---|---|---|---|---|")
