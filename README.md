@@ -13,6 +13,8 @@ The same probe text is a valid continuation in its own session and a non-sequitu
 
 Besides plain swaps there are three harder probe families, each paired with a control that uses the same text: **unasked answers** ("the second one" when no options were offered), **pastes** (another project's stack trace with no instruction), and **same words** (messages that reuse the session's vocabulary for something that doesn't exist there). See `docs/DESIGN.md`.
 
+A separate **time** family asks whether an agent looks at the clock when timing matters. Messages carry no timestamps the model can see, but an agent with a shell can run `date`, like a person glancing at a clock. Each time case has a hidden send time; the harness answers `date` with it. The two cases of a pair look identical to the model ("staging looks good, promote it to prod", sent 2 or 21 minutes into a 15-minute deploy), so only checking the clock tells them apart. The report scores both parts: did it check, and did it act on what it saw.
+
 ## Metrics
 
 | metric | meaning |
@@ -55,10 +57,12 @@ Re-running with the same `--out` resumes and retries errors. Use `--limit 5` for
 
 ```
 data/sessions/*.json   scripted sessions + their native probes (continuations, switches, question endings, pastes, lures)
+data/sessions/time/    time-family scenarios (hidden send times, status commands that follow the clock)
 data/cases.jsonl       generated cases (python -m wwb.build_cases)
 wwb/build_cases.py     message-swap generator, difficulty tiers
 wwb/prompts.py         system prompt variants
 wwb/tools.py           fake tools for agentic sessions (never executed)
+wwb/clock.py           mocked clock for the time family (answers `date` with the case's hidden time)
 wwb/providers.py       OpenRouter + mock models
 wwb/judge.py           labels: Jev or LLM judge + regex fallback
 wwb/run.py             runner (concurrent, resumable)

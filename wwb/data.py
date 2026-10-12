@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SESSIONS_DIR = ROOT / "data" / "sessions"
+TIME_SESSIONS_DIR = SESSIONS_DIR / "time"  # time-family scenarios; kept out of the cross-session families
 CASES_PATH = ROOT / "data" / "cases.jsonl"
 
 
@@ -34,6 +35,11 @@ class Session:
     question_endings: list[dict] = field(default_factory=list)  # alt last assistant turn + answers to it
     pastes: list[dict] = field(default_factory=list)  # pasted output (errors, logs, data), no instruction
     lures: list[dict] = field(default_factory=list)  # continuations reusing other sessions' vocabulary
+    # Time family (see clock.py): when the history ends, probes with hidden send times, and
+    # read-only status commands the harness answers according to that time.
+    clock: dict = field(default_factory=dict)
+    time_probes: list[dict] = field(default_factory=list)
+    mock_commands: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -46,8 +52,9 @@ class Case:
     difficulty: str  # "easy" | "medium" | "hard" | "same_session" | "control"
     donor_session_id: str | None = None
     probe_source_id: str | None = None
-    type: str = "swap"  # probe family: "swap" | "unasked_answer" | "paste" | "same_words"
+    type: str = "swap"  # probe family: "swap" | "unasked_answer" | "paste" | "same_words" | "time"
     ending_id: str | None = None  # replace the last assistant turn with this question ending
+    now: str | None = None  # time family: hidden time the probe was sent (what `date` returns)
     meta: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -61,7 +68,8 @@ def load_session(path: Path) -> Session:
         env=d.get("env", {}), summary=d["summary"], history=d["history"],
         continuations=d.get("continuations", []), switches=d.get("switches", []),
         question_endings=d.get("question_endings", []), pastes=d.get("pastes", []),
-        lures=d.get("lures", []),
+        lures=d.get("lures", []), clock=d.get("clock", {}), time_probes=d.get("time_probes", []),
+        mock_commands=d.get("mock_commands", []),
     )
 
 
@@ -72,6 +80,15 @@ def load_sessions(directory: Path = SESSIONS_DIR) -> dict[str, Session]:
         if s.id in sessions:
             raise ValueError(f"duplicate session id {s.id}")
         sessions[s.id] = s
+    return sessions
+
+
+def load_all_sessions() -> dict[str, Session]:
+    sessions = load_sessions()
+    for sid, s in load_sessions(TIME_SESSIONS_DIR).items():
+        if sid in sessions:
+            raise ValueError(f"duplicate session id {sid}")
+        sessions[sid] = s
     return sessions
 
 

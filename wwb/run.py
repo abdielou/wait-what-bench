@@ -2,6 +2,8 @@
 
 Each case = a scripted session history + one probe message. We generate exactly
 one assistant response per (case, model, variant, thinking, sample) and label it.
+Time cases are the exception: if the model checks the clock (`date`) or a declared
+status command, the harness answers with the case's hidden time and lets it go on.
 
 Examples:
   python -m wwb.run --provider mock --models mock/eager,mock/paranoid --judge regex
@@ -20,7 +22,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .data import CASES_PATH, case_history, load_cases, load_sessions, to_openai_messages
+from .clock import answer_tool_call, clock_output, parse_time
+from .data import CASES_PATH, case_history, load_all_sessions, load_cases, to_openai_messages
 from .judge import jev_label, llm_label, regex_label
 from .prompts import VARIANTS, system_prompt
 from .providers import MockProvider, get_provider
@@ -28,6 +31,7 @@ from .tools import TOOLS
 
 
 DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
+MAX_CLOCK_ROUNDS = 3  # time cases: harness-answered tool rounds before the response must end
 
 
 def build_messages(session, variant: str, case) -> list[dict]:
@@ -35,6 +39,36 @@ def build_messages(session, variant: str, case) -> list[dict]:
     msgs += to_openai_messages(case_history(session, case), session.id)
     msgs.append({"role": "user", "content": case.probe})
     return msgs
+
+
+def respond(provider, model, msgs, tools, thinking, temperature, case, session):
+    """The model's response to the probe, plus a trace of the tool calls the harness answered.
+    Only time cases get answers: `date` gets the hidden time, declared status commands get
+    their state at that time. Any other tool call is a real action and ends the response."""
+    trace: list[dict] = []
+    r = provider.complete(model, msgs, tools=tools, thinking=thinking, temperature=temperature)
+    if not case.now:
+        return r, trace
+    now = parse_time(case.now)
+    msgs = list(msgs)
+    for rnd in range(MAX_CLOCK_ROUNDS):
+        if r.error or not r.tool_calls:
+            break
+        answers = [answer_tool_call(tc, now, session.mock_commands) for tc in r.tool_calls]
+        if any(a is None for a in answers):
+            break
+        calls = [{"id": tc.get("id") or f"call_clock_{rnd}_{i}", "type": "function",
+                  "function": {"name": tc["name"], "arguments": tc.get("arguments", "")}}
+                 for i, tc in enumerate(r.tool_calls)]
+        assistant = {"role": "assistant", "content": r.text or None, "tool_calls": calls}
+        if r.reasoning_details:
+            assistant["reasoning_details"] = r.reasoning_details
+        msgs.append(assistant)
+        for call, (kind, command, output) in zip(calls, answers):
+            msgs.append({"role": "tool", "tool_call_id": call["id"], "content": output})
+            trace.append({"kind": kind, "command": command, "output": output})
+        r = provider.complete(model, msgs, tools=tools, thinking=thinking, temperature=temperature)
+    return r, trace
 
 
 def row_key(d: dict) -> tuple:
@@ -89,7 +123,7 @@ def main(argv=None):
         if t not in ("off", "on"):
             ap.error(f"unknown thinking setting {t}")
 
-    sessions = load_sessions()
+    sessions = load_all_sessions()
     cases = load_cases(args.cases)
     if args.filter:
         cases = [c for c in cases if args.filter in c.id]
@@ -98,9 +132,12 @@ def main(argv=None):
 
     provider = get_provider(args.provider)
     if isinstance(provider, MockProvider):
-        provider.oracle_labels = {
-            MockProvider.oracle_key(build_messages(sessions[c.session_id], "neutral", c)): c.expected for c in cases
-        }
+        for c in cases:
+            key = MockProvider.oracle_key(build_messages(sessions[c.session_id], "neutral", c))
+            if c.now:
+                provider.time_labels.setdefault(key, {})[clock_output("date", parse_time(c.now))] = c.expected
+            else:
+                provider.oracle_labels[key] = c.expected
 
     out = args.out or Path("results") / f"run-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -124,20 +161,26 @@ def main(argv=None):
         sess = sessions[c.session_id]
         msgs = build_messages(sess, v, c)
         tools = TOOLS if sess.kind == "agentic" else None
-        r = provider.complete(m, msgs, tools=tools, thinking=t if args.provider != "mock" else None,
-                              temperature=args.temperature)
-        acted = bool(r.tool_calls)
+        r, trace = respond(provider, m, msgs, tools, t if args.provider != "mock" else None,
+                           args.temperature, c, sess)
+        # Clock and status checks are reading, not acting (they only remain here if the rounds ran out).
+        actions = [tc for tc in r.tool_calls
+                   if not (c.now and answer_tool_call(tc, parse_time(c.now), sess.mock_commands))]
+        acted = bool(actions)
         if r.error:
             label, reason = "ERROR", r.error
         elif args.judge in ("jev", "llm"):
             judge = jev_label if args.judge == "jev" else llm_label
-            label, reason = judge(provider, args.judge_model, sess.summary, c.probe, r.text, r.tool_calls)
+            label, reason = judge(provider, args.judge_model, sess.summary, c.probe, r.text, actions)
         else:
             label, reason = regex_label(r.text, acted), "regex"
         return {
             "case_id": c.id, "session_id": c.session_id, "kind": sess.kind,
             "category": c.category, "expected": c.expected, "difficulty": c.difficulty,
             "type": c.type, "ending_id": c.ending_id,
+            "now": c.now, "critical": c.meta.get("critical"),
+            "checked_clock": any(x["kind"] == "clock" for x in trace),
+            "checked_state": any(x["kind"] == "state" for x in trace), "tool_trace": trace,
             "donor_session_id": c.donor_session_id,
             "model": m, "variant": v, "thinking": t, "sample": s,
             "probe": c.probe, "response_text": r.text, "tool_calls": r.tool_calls,

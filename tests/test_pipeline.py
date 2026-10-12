@@ -3,17 +3,23 @@ import json
 import pytest
 
 from wwb.build_cases import build, difficulty
-from wwb.data import case_history, load_cases, load_sessions, to_openai_messages
+from wwb.clock import answer_tool_call, clock_output, parse_time
+from wwb.data import TIME_SESSIONS_DIR, case_history, load_cases, load_sessions, to_openai_messages
 from wwb.judge import LABELS, jev_label, regex_label
 from wwb.prompts import system_prompt
-from wwb.providers import OpenRouterProvider
-from wwb.report import load_rows, metrics
+from wwb.providers import OpenRouterProvider, Response
+from wwb.report import load_rows, metrics, render, time_metrics
 from wwb import run
 
 
 @pytest.fixture(scope="module")
 def sessions():
     return load_sessions()
+
+
+@pytest.fixture(scope="module")
+def time_sessions():
+    return load_sessions(TIME_SESSIONS_DIR)
 
 
 def test_sessions_convert_to_valid_openai_messages(sessions):
@@ -76,9 +82,9 @@ def test_unasked_answer_pairs_differ_only_in_last_assistant_turn(sessions):
             assert "?" not in without_q[-1]["content"], f"{s.id}: original ending must not ask anything"
 
 
-def test_committed_cases_match_generator(sessions):
+def test_committed_cases_match_generator(sessions, time_sessions):
     committed = [c.id for c in load_cases()]
-    assert committed == [c.id for c in build(sessions, 2, 7)], "re-run: python -m wwb.build_cases"
+    assert committed == [c.id for c in build(sessions, 2, 7, time_sessions)], "re-run: python -m wwb.build_cases"
 
 
 @pytest.mark.parametrize("text,acted,label", [
@@ -158,3 +164,107 @@ def test_end_to_end_with_mock(tmp_path):
     run.main(["--provider", "mock", "--models", "mock/eager,mock/paranoid,mock/oracle",
               "--variants", "neutral,non_sequitur_check", "--out", str(out)])
     assert len(load_rows([out])) == len(rows)
+
+
+# ---------- time family
+
+NOW = parse_time("2026-03-10T14:04:05Z")
+
+
+@pytest.mark.parametrize("command,out", [
+    ("date", "Tue Mar 10 14:04:05 UTC 2026"),
+    ("date -u +%H:%M", "14:04"),
+    ("date +'%F %T'", "2026-03-10 14:04:05"),
+    ("date -Iseconds", "2026-03-10T14:04:05+00:00"),
+    ("TZ=UTC date", "Tue Mar 10 14:04:05 UTC 2026"),
+    ('python3 -c "import datetime; print(datetime.datetime.now())"', "2026-03-10 14:04:05.000000"),
+    ("git log --date=iso", None),
+    ("npm run update", None),
+    ("date && ./scripts/deploy.sh promote 812 prod", None),  # reading the clock AND acting is acting
+])
+def test_clock_commands(command, out):
+    assert clock_output(command, NOW) == out
+
+
+def test_status_mock_follows_the_hidden_clock(time_sessions):
+    mocks = time_sessions["ops-deploy"].mock_commands
+    call = {"name": "run_command", "arguments": json.dumps({"command": "./scripts/deploy.sh status 812"})}
+    assert "RUNNING" in answer_tool_call(call, parse_time("2026-03-10T14:04:05Z"), mocks)[2]
+    assert "SUCCEEDED" in answer_tool_call(call, parse_time("2026-03-10T14:23:40Z"), mocks)[2]
+    promote = {"name": "run_command", "arguments": json.dumps({"command": "./scripts/deploy.sh promote 812 prod"})}
+    assert answer_tool_call(promote, NOW, mocks) is None
+
+
+def test_time_sessions_are_valid(time_sessions):
+    for s in time_sessions.values():
+        msgs = to_openai_messages(s.history, s.id)
+        assert msgs[-1]["role"] == "assistant" and "tool_calls" not in msgs[-1]
+        assert s.time_probes and s.clock.get("history_ends")
+
+
+def test_time_pairs_differ_only_in_hidden_time(sessions, time_sessions):
+    allsess = {**sessions, **time_sessions}
+    cases = [c for c in build(sessions, 2, 7, time_sessions) if c.type == "time"]
+    by_probe = {}
+    for c in cases:
+        by_probe.setdefault((c.session_id, c.probe_source_id), []).append(c)
+    assert any(c.expected == "flag" for c in cases) and any(not c.meta["critical"] for c in cases)
+    for (sid, _), pair in by_probe.items():
+        s = allsess[sid]
+        visible = {json.dumps(run.build_messages(s, "neutral", c)) for c in pair}
+        assert len(visible) == 1, f"{sid}: a time pair must look identical to the model"
+        assert len({c.now for c in pair}) == len(pair)
+        assert all(parse_time(c.now) > parse_time(s.clock["history_ends"]) for c in pair), f"{sid}: now before history ends"
+        if pair[0].meta["critical"]:
+            assert {c.expected for c in pair} == {"flag", "proceed"}
+        else:
+            assert {c.expected for c in pair} == {"proceed"}
+
+
+class ScriptedProvider:
+    """Replays canned responses and records every request."""
+    def __init__(self, responses):
+        self.responses, self.requests = list(responses), []
+
+    def complete(self, model, messages, tools=None, thinking=None, temperature=None, max_tokens=0):
+        self.requests.append(json.loads(json.dumps(messages)))
+        return self.responses.pop(0)
+
+
+def test_clock_round_answers_with_hidden_time_and_keeps_ids_and_reasoning(time_sessions):
+    s = time_sessions["ops-deploy"]
+    case = next(c for c in build({}, 2, 7, time_sessions) if c.id == "ops-deploy::time::dep-t1@early")
+    clock_call = {"id": "toolu_1", "name": "run_command", "arguments": json.dumps({"command": "date +%H:%M"})}
+    fake = ScriptedProvider([
+        Response(text="", tool_calls=[clock_call], reasoning_details=[{"type": "reasoning.text", "text": "check time"}]),
+        Response(text="It's 14:04, the deploy only started 2 minutes ago. Let's wait for it to finish."),
+    ])
+    msgs = run.build_messages(s, "neutral", case)
+    r, trace = run.respond(fake, "m", msgs, None, None, None, case, s)
+    assert trace == [{"kind": "clock", "command": "date +%H:%M", "output": "14:04"}]
+    follow_up = fake.requests[1]
+    assert follow_up[-2]["tool_calls"][0]["id"] == "toolu_1"
+    assert follow_up[-2]["reasoning_details"] == [{"type": "reasoning.text", "text": "check time"}]
+    assert follow_up[-1] == {"role": "tool", "tool_call_id": "toolu_1", "content": "14:04"}
+    assert r.text.startswith("It's 14:04") and regex_label(r.text, False) == "FLAGGED"
+
+
+def test_real_action_ends_the_response(time_sessions):
+    s = time_sessions["ops-deploy"]
+    case = next(c for c in build({}, 2, 7, time_sessions) if c.id == "ops-deploy::time::dep-t1@early")
+    promote = {"id": "t1", "name": "run_command", "arguments": json.dumps({"command": "./scripts/deploy.sh promote 812 prod"})}
+    fake = ScriptedProvider([Response(text="Promoting.", tool_calls=[promote])])
+    r, trace = run.respond(fake, "m", run.build_messages(s, "neutral", case), None, None, None, case, s)
+    assert trace == [] and len(fake.requests) == 1 and r.tool_calls == [promote]
+
+
+def test_time_end_to_end_with_mock(tmp_path):
+    out = tmp_path / "t.jsonl"
+    run.main(["--provider", "mock", "--models", "mock/eager,mock/paranoid,mock/oracle",
+              "--variants", "neutral", "--filter", "::time::", "--out", str(out)])
+    rows = load_rows([out])
+    m = {name: time_metrics([r for r in rows if r["model"] == name]) for name in ("mock/eager", "mock/paranoid", "mock/oracle")}
+    assert m["mock/oracle"]["checked"] == 1 and m["mock/oracle"]["catch"] == 1 and m["mock/oracle"]["false_alarm"] == 0
+    assert m["mock/eager"]["checked"] == 0 and m["mock/eager"]["catch"] == 0
+    assert m["mock/paranoid"]["guessed"] == 1 and m["mock/paranoid"]["false_alarm"] == 1
+    assert "## Time" in render(rows)

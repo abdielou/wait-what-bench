@@ -4,6 +4,7 @@ Zero dependencies: uses urllib from the standard library.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -28,8 +29,11 @@ THINKING_PARAMS = {
 @dataclass
 class Response:
     text: str
-    tool_calls: list[dict] = field(default_factory=list)  # [{"name":..., "arguments":...}]
+    tool_calls: list[dict] = field(default_factory=list)  # [{"id":..., "name":..., "arguments":...}]
     reasoning: str | None = None
+    # Passed back verbatim when the conversation continues after a tool call (time family):
+    # some providers reject a tool-use continuation that drops the model's reasoning blocks.
+    reasoning_details: list | None = None
     usage: dict = field(default_factory=dict)
     error: str | None = None
 
@@ -101,12 +105,12 @@ class OpenRouterProvider:
         # A malformed payload becomes an errored row (retried on resume) instead of killing the run.
         try:
             msg = payload["choices"][0]["message"]
-            calls = [{"name": tc["function"]["name"], "arguments": tc["function"].get("arguments", "")}
+            calls = [{"id": tc.get("id"), "name": tc["function"]["name"], "arguments": tc["function"].get("arguments", "")}
                      for tc in (msg.get("tool_calls") or [])]
         except (KeyError, IndexError, TypeError) as e:
             return Response(text="", error=f"unexpected payload ({type(e).__name__}: {e}): {json.dumps(payload)[:300]}")
-        return Response(text=msg.get("content") or "", tool_calls=calls,
-                        reasoning=msg.get("reasoning"), usage=payload.get("usage", {}))
+        return Response(text=msg.get("content") or "", tool_calls=calls, reasoning=msg.get("reasoning"),
+                        reasoning_details=msg.get("reasoning_details"), usage=payload.get("usage", {}))
 
 
 class MockProvider:
@@ -115,27 +119,44 @@ class MockProvider:
     model names:
       mock/eager     always proceeds (tool call in agentic sessions, an answer in chat)
       mock/paranoid  always flags the message as not following from the session
-      mock/oracle    flags exactly the cases that are non-sequiturs (uses the case label; tests only)
+      mock/oracle    flags exactly the cases that are non-sequiturs (uses the case label; tests only).
+                     In time cases it runs `date` first, since only the clock tells a pair apart.
     """
     FLAG = ("This doesn't seem to follow from what we've been working on here. "
             "What did you mean?")
 
     def __init__(self):
-        # (first user message, last assistant turn, probe) -> expected. The same probe text is valid
-        # in its own session and a non-sequitur elsewhere, and question-ending minimal pairs share a
-        # session and differ only in the last assistant turn.
-        self.oracle_labels: dict[tuple[str, str, str], str] = {}
+        # visible conversation up to the probe -> expected. The same probe text is valid in its own
+        # session and a non-sequitur elsewhere, and some pairs differ in a single earlier turn.
+        self.oracle_labels: dict[str, str] = {}
+        # time cases: same key -> {what `date` prints at the hidden time: expected}
+        self.time_labels: dict[str, dict[str, str]] = {}
 
     @staticmethod
-    def oracle_key(messages) -> tuple[str, str, str]:
-        first_user = next(m["content"] for m in messages if m["role"] == "user")
-        return first_user, messages[-2].get("content") or "", messages[-1]["content"]
+    def _probe_index(messages) -> int:
+        return max(j for j, m in enumerate(messages) if m["role"] == "user")
+
+    @staticmethod
+    def oracle_key(messages) -> str:
+        """Everything visible up to the probe (the last user message), minus the system prompt, which
+        varies by variant. Keyed on the probe, so it still works after a clock round."""
+        upto = messages[: MockProvider._probe_index(messages) + 1]
+        visible = [{k: m.get(k) for k in ("role", "content", "tool_calls")} for m in upto if m["role"] != "system"]
+        return hashlib.sha1(json.dumps(visible, sort_keys=True).encode()).hexdigest()
 
     def complete(self, model, messages, tools=None, thinking=None, temperature=None, max_tokens=0):
-        probe = messages[-1]["content"]
+        key = self.oracle_key(messages)
+        probe = messages[self._probe_index(messages)]["content"]
         behavior = model.split("/", 1)[-1]
         if behavior == "oracle":
-            behavior = "paranoid" if self.oracle_labels.get(self.oracle_key(messages)) == "flag" else "eager"
+            if key in self.time_labels:
+                if messages[-1]["role"] == "user":
+                    return Response(text="Let me check the time.", tool_calls=[
+                        {"id": "call_clock", "name": "run_command", "arguments": json.dumps({"command": "date"})}])
+                expected = self.time_labels[key].get(messages[-1].get("content"))
+            else:
+                expected = self.oracle_labels.get(key)
+            behavior = "paranoid" if expected == "flag" else "eager"
         if behavior == "paranoid":
             return Response(text=self.FLAG)
         if behavior == "eager":

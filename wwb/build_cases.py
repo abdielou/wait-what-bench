@@ -18,6 +18,11 @@ Three more probe families, each with a twin control (same probe text, expected: 
   same_words      continuations written to reuse a target session's vocabulary while meaning something
                   that doesn't exist there, so keyword overlap can't catch them
 
+Time family (sessions in data/sessions/time/, plus `time_probes` on any session): the same visible
+conversation and probe, sent at different hidden times. Only checking the clock (see clock.py) tells
+the cases apart. Probes where the timing changes the right answer are critical (one time expects
+flag, another proceed); probes where time doesn't matter expect proceed at every time.
+
 Usage: python -m wwb.build_cases [--per-pair 2] [--seed 7] [--out data/cases.jsonl]
 """
 from __future__ import annotations
@@ -26,7 +31,7 @@ import argparse
 import random
 from pathlib import Path
 
-from .data import CASES_PATH, Case, Session, load_sessions
+from .data import CASES_PATH, TIME_SESSIONS_DIR, Case, Session, load_sessions
 
 
 def difficulty(target: Session, donor: Session) -> str:
@@ -37,7 +42,8 @@ def difficulty(target: Session, donor: Session) -> str:
     return "easy"
 
 
-def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7) -> list[Case]:
+def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7,
+          time_sessions: dict[str, Session] | None = None) -> list[Case]:
     rng = random.Random(seed)
     cases: list[Case] = []
     for t in sessions.values():
@@ -88,6 +94,15 @@ def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7) -> lis
                 cases.append(Case(id=f"{d.id}::ns-lure::{lure['id']}", session_id=d.id, probe=lure["text"],
                                   category="non_sequitur", expected="flag", difficulty=difficulty(d, t),
                                   donor_session_id=t.id, probe_source_id=lure["id"], type="same_words"))
+    for t in [*sessions.values(), *(time_sessions or {}).values()]:
+        for tp in t.time_probes:
+            critical = any(x["expected"] == "flag" for x in tp["times"])
+            for x in tp["times"]:
+                flag = x["expected"] == "flag"
+                cases.append(Case(id=f"{t.id}::time::{tp['id']}@{x['id']}", session_id=t.id, probe=tp["text"],
+                                  category="non_sequitur" if flag else "continuation", expected=x["expected"],
+                                  difficulty="timing" if flag else "control", probe_source_id=tp["id"],
+                                  type="time", now=x["now"], meta={"critical": critical}))
     return cases
 
 
@@ -98,7 +113,7 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, default=CASES_PATH)
     args = ap.parse_args(argv)
 
-    cases = build(load_sessions(), args.per_pair, args.seed)
+    cases = build(load_sessions(), args.per_pair, args.seed, load_sessions(TIME_SESSIONS_DIR))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text("".join(c.to_json() + "\n" for c in cases), encoding="utf-8")
 

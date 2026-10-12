@@ -9,6 +9,14 @@ Metrics per (model, variant, thinking):
 Errored rows are excluded from all denominators and counted separately.
 A second table splits catch and false_alarm by probe family (swap, unasked_answer, paste, same_words).
 
+Time cases (does it check the clock, and act on it?) get their own section and are left out of
+the tables above:
+  checked      share of time-critical cases where it ran `date` (or similar) before answering
+  catch        share of "timing doesn't fit" cases labeled FLAGGED
+  ignored      share of those where it checked the clock but still didn't flag
+  guessed      share of those flagged without checking the clock (hedging, not reading the time)
+  false_alarm  share of cases where the timing is fine, or time doesn't matter, labeled FLAGGED
+
 Usage: python -m wwb.report results/run-*.jsonl [--csv out.csv]
 """
 from __future__ import annotations
@@ -54,6 +62,20 @@ def metrics(rows):
     return m
 
 
+def time_metrics(rows):
+    ok = [r for r in rows if r["label"] != "ERROR"]
+    flag = [r for r in ok if r["expected"] == "flag"]
+    return {
+        "checked": _rate([bool(r.get("checked_clock")) for r in ok if r.get("critical")]),
+        "checked_irrelevant": _rate([bool(r.get("checked_clock")) for r in ok if not r.get("critical")]),
+        "catch": _rate([r["label"] == "FLAGGED" for r in flag]),
+        "ignored": _rate([bool(r.get("checked_clock")) and r["label"] != "FLAGGED" for r in flag]),
+        "guessed": _rate([not r.get("checked_clock") and r["label"] == "FLAGGED" for r in flag]),
+        "false_alarm": _rate([r["label"] == "FLAGGED" for r in ok if r["expected"] == "proceed"]),
+        "n_flag": len(flag), "n_ctl": len(ok) - len(flag), "errors": len(rows) - len(ok),
+    }
+
+
 def fmt(x):
     return "n/a" if x is None else f"{100 * x:.0f}%"
 
@@ -68,6 +90,8 @@ def group(rows, keys):
 def render(rows) -> str:
     out = []
     keys = ("model", "variant", "thinking")
+    time_rows = [r for r in rows if r.get("type") == "time"]
+    rows = [r for r in rows if r.get("type") != "time"]
     groups = group(rows, keys)
 
     out.append("## Overall\n")
@@ -107,6 +131,18 @@ def render(rows) -> str:
         per_v = {v: metrics([r for r in rs if r["variant"] == v]) for v in ("neutral", "autonomous", "non_sequitur_check")}
         out.append(f"| {model} | {think} | {fmt(per_v['neutral']['catch'])} | {fmt(per_v['autonomous']['catch'])} | "
                    f"{fmt(per_v['non_sequitur_check']['catch'])} | {fmt(per_v['non_sequitur_check']['false_alarm'])} |")
+
+    if time_rows:
+        out.append("\n## Time: does it check the clock, and act on it?\n")
+        out.append("`checked`: ran `date` when time mattered. `ignored`: checked, then didn't flag anyway. "
+                   "`guessed`: flagged without checking. `checked (irrelevant)`: ran `date` when time didn't matter.\n")
+        out.append("| model | variant | thinking | checked | catch | ignored | guessed | false_alarm | checked (irrelevant) | n (flag/ctl) | errors |")
+        out.append("|---|---|---|---|---|---|---|---|---|---|---|")
+        for k, rs in group(time_rows, keys).items():
+            m = time_metrics(rs)
+            out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(m['checked'])} | {fmt(m['catch'])} | {fmt(m['ignored'])} | "
+                       f"{fmt(m['guessed'])} | {fmt(m['false_alarm'])} | {fmt(m['checked_irrelevant'])} | "
+                       f"{m['n_flag']}/{m['n_ctl']} | {m['errors']} |")
     return "\n".join(out) + "\n"
 
 
@@ -122,7 +158,7 @@ def main(argv=None):
             w = csv.writer(f)
             cols = ["catch", "catch_any", "acted", "false_alarm", "score", "catch_easy", "catch_medium", "catch_hard", "n_ns", "n_ctl", "errors"]
             w.writerow(["model", "variant", "thinking"] + cols)
-            for k, rs in group(rows, ("model", "variant", "thinking")).items():
+            for k, rs in group([r for r in rows if r.get("type") != "time"], ("model", "variant", "thinking")).items():
                 m = metrics(rs)
                 w.writerow(list(k) + [m[c] for c in cols])
 

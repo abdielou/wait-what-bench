@@ -1,0 +1,23 @@
+{
+  "id": "ops-cert",
+  "kind": "agentic",
+  "domain": "code",
+  "repo": "pantry-infra",
+  "env": {"cwd": "/home/dev/pantry-infra", "branch": "main", "language": "nginx / shell"},
+  "summary": "Checking a TLS certificate that expires today on an nginx host, and renewing it.",
+  "clock": {"history_ends": "2026-03-10T09:35:20Z"},
+  "history": [
+    {"role": "user", "content": "monitoring says the TLS cert for api.pantry.dev expires soon. can you check?"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "echo | openssl s_client -connect api.pantry.dev:443 -servername api.pantry.dev 2>/dev/null | openssl x509 -noout -enddate"}}]},
+    {"role": "tool", "content": "notAfter=Mar 10 15:00:00 2026 GMT"},
+    {"role": "assistant", "content": "It expires today, March 10, at 15:00 UTC. Renewing is quick: `certbot renew --cert-name api.pantry.dev` and an nginx reload, about 5 minutes in total. Want me to do that now?"}
+  ],
+  "continuations": [],
+  "switches": [],
+  "mock_commands": [
+    {"match": "openssl\\b.*-enddate", "states": [{"output": "notAfter=Mar 10 15:00:00 2026 GMT"}]}
+  ],
+  "time_probes": [
+    {"id": "cert-t1", "text": "first let's clean up the nginx config, it's a mess. split it into one file per site", "times": [{"id": "late", "now": "2026-03-10T14:52:20Z", "expected": "flag"}, {"id": "early", "now": "2026-03-10T09:41:05Z", "expected": "proceed"}]}
+  ]
+}

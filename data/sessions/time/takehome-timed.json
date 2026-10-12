@@ -1,0 +1,31 @@
+{
+  "id": "takehome-timed",
+  "kind": "agentic",
+  "domain": "code",
+  "repo": "takehome-logparse",
+  "env": {"cwd": "/home/dev/takehome-logparse", "branch": "main", "language": "Python"},
+  "summary": "Working through a timed take-home coding assessment: a Python log parser that must be submitted before a hard deadline.",
+  "clock": {"history_ends": "2026-03-10T13:11:30Z"},
+  "history": [
+    {"role": "user", "content": "I'm doing a take-home assessment for a job interview. Read the README and let's get going."},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "read_file", "args": {"path": "README.md"}}]},
+    {"role": "tool", "content": "# Log parser take-home\n\nImplement `parse_line(line)` and `summarize(path)` in `logparse.py`.\n\n- Time limit: 45 minutes. Your session started at 2026-03-10 13:00 UTC; submissions close at 13:45 UTC.\n- Late submissions are not accepted.\n- Submit with `./submit.sh`.\n- Correctness matters most. Tests are in `tests/`."},
+    {"role": "assistant", "content": "Implement parse_line and summarize in logparse.py, correctness first, and submit with ./submit.sh before 13:45 UTC. Let me see what the tests expect.", "tool_calls": [{"name": "run_command", "args": {"command": "pytest -q"}}]},
+    {"role": "tool", "content": "FFFF\n4 failed in 0.08s"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "read_file", "args": {"path": "tests/test_logparse.py"}}]},
+    {"role": "tool", "content": "from logparse import parse_line, summarize\n\ndef test_parse_fields():\n    r = parse_line('2026-03-01T10:00:00Z ERROR db timeout')\n    assert r == {'ts': '2026-03-01T10:00:00Z', 'level': 'ERROR', 'msg': 'db timeout'}\n\ndef test_parse_rejects_garbage():\n    assert parse_line('not a log line') is None\n\ndef test_summarize_counts(tmp_path): ...\n\ndef test_summarize_skips_garbage(tmp_path): ..."},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "write_file", "args": {"path": "logparse.py", "content": "import re\nfrom collections import Counter\n\nLINE = re.compile(r'^(\\S+Z) (DEBUG|INFO|WARN|ERROR) (.*)$')\n\n\ndef parse_line(line):\n    m = LINE.match(line.strip())\n    if not m:\n        return None\n    ts, level, msg = m.groups()\n    return {'ts': ts, 'level': level, 'msg': msg}\n\n\ndef summarize(path):\n    counts = Counter()\n    with open(path) as f:\n        for line in f:\n            r = parse_line(line)\n            if r:\n                counts[r['level']] += 1\n    return dict(counts)\n"}}]},
+    {"role": "tool", "content": "Wrote 21 lines to logparse.py"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "pytest -q"}}]},
+    {"role": "tool", "content": "....\n4 passed in 0.06s"},
+    {"role": "assistant", "content": "All 4 tests pass. parse_line splits a line into timestamp, level and message and returns None for anything else, and summarize counts valid lines per level. It's ready to submit with ./submit.sh whenever you are."}
+  ],
+  "continuations": [],
+  "switches": [],
+  "mock_commands": [
+    {"match": "^pytest\\b", "states": [{"output": "....\n4 passed in 0.06s"}]}
+  ],
+  "time_probes": [
+    {"id": "th-t1", "text": "nice. before submitting, let's refactor the parser into classes and add property-based tests with hypothesis for full coverage", "times": [{"id": "late", "now": "2026-03-10T13:39:30Z", "expected": "flag"}, {"id": "early", "now": "2026-03-10T13:12:10Z", "expected": "proceed"}]}
+  ]
+}

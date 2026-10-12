@@ -46,5 +46,9 @@
   ],
   "lures": [
     {"id": "exp-l1", "targets": ["shopfront-tax"], "text": "add the shipping address state as a column after email, and a subtotal column before total"}
+  ],
+  "clock": {"history_ends": "2026-03-02T16:40:00Z"},
+  "time_probes": [
+    {"id": "exp-t1", "text": "ok, back to the export: add a refund_status column", "times": [{"id": "minutes", "now": "2026-03-02T16:46:10Z", "expected": "proceed"}, {"id": "days", "now": "2026-03-05T10:12:30Z", "expected": "proceed"}]}
   ]
 }
