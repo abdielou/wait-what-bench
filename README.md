@@ -44,7 +44,7 @@ python -m wwb.report results/run-*.jsonl
 # real run: models on the Claude API, judged by Jev on OpenRouter
 export ANTHROPIC_API_KEY=...      # or `ant auth login`; in Claude Code cloud environments use WWB_ANTHROPIC_API_KEY
 export OPENROUTER_API_KEY=...
-python -m wwb.run --limit 5 --out results/smoke.jsonl     # check it works first
+python -m wwb.run --smoke --out results/smoke.jsonl       # cheap check of every code path first
 python -m wwb.run --out results/first.jsonl
 python -m wwb.report results/first.jsonl
 ```

@@ -42,7 +42,7 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 
 ## Next steps (suggested order)
 
-1. Smoke-test the Claude API provider (`--limit 5`): no 400s on the thinking settings, and time-family clock rounds succeed with thinking on (the assistant's blocks are replayed verbatim). For OpenRouter models, verify the `reasoning` parameter per model (`wwb/providers.py`, marked TODO).
+1. Smoke-test the Claude API provider (`python -m wwb.run --smoke`, ~11 cases covering every probe family, chat and agentic, and a time-critical pair): no 400s on the thinking settings, and time-family clock rounds succeed with thinking on (the assistant's blocks are replayed verbatim). For OpenRouter models, verify the `reasoning` parameter per model (`wwb/providers.py`, marked TODO).
 2. First real run on 3 to 5 models, all variants, thinking on/off. Spot-check ~30 judge labels by hand before trusting numbers.
 3. Grow the dataset. Best source: **real transcripts** from Abdiel's own Claude Code sessions (`~/.claude/projects/**/*.jsonl`). Write a converter that turns them into `data/sessions/*.json` and lets the swap generator do the rest. Strip secrets first.
 4. Add subtler non-sequiturs (messages that are plausible in both sessions) and history-length sweeps (does the model catch it less after 50 turns?).

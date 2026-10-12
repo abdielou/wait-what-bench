@@ -7,7 +7,7 @@ status command, the harness answers with the case's hidden time and lets it go o
 
 Examples:
   python -m wwb.run --provider mock --models mock/eager,mock/paranoid --judge regex
-  python -m wwb.run --limit 5 --out results/smoke.jsonl     # latest Claude models, judged by Jev
+  python -m wwb.run --smoke --out results/smoke.jsonl       # cheap check: every code path, all models
   python -m wwb.run --out results/first.jsonl               # full run: all variants, thinking off,on
   python -m wwb.run --provider openrouter --models openai/gpt-5 --thinking off,on --out results/or.jsonl
 
@@ -78,6 +78,28 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
     return r, trace
 
 
+def smoke_cases(cases, sessions) -> list:
+    """A few cases that touch every code path, for a cheap check before the full run: one
+    non-sequitur per probe family (agentic where possible) with its twin control, which for the
+    time family is a time-critical pair (clock rounds), plus one chat non-sequitur."""
+    picked = []
+
+    def add(c):
+        if c is not None and c not in picked:
+            picked.append(c)
+
+    for typ in dict.fromkeys(c.type for c in cases):
+        fam = [c for c in cases if c.type == typ]
+        ns = next((c for c in fam if c.expected == "flag" and sessions[c.session_id].kind == "agentic"),
+                  next((c for c in fam if c.expected == "flag"), None))
+        if ns:
+            add(ns)
+            add(next((c for c in fam if c.expected == "proceed" and c.probe_source_id == ns.probe_source_id),
+                     next((c for c in fam if c.expected == "proceed" and c.session_id == ns.session_id), None)))
+    add(next((c for c in cases if c.expected == "flag" and sessions[c.session_id].kind == "chat"), None))
+    return picked
+
+
 def row_key(d: dict) -> tuple:
     return (d["case_id"], d["model"], d["variant"], d["thinking"], d["sample"])
 
@@ -99,7 +121,7 @@ def main(argv=None):
                     help="where the models under test run (default: Claude API)")
     ap.add_argument("--models", default=None,
                     help=f"comma-separated model ids (default for anthropic: {','.join(LATEST_ANTHROPIC_MODELS)})")
-    ap.add_argument("--variants", default=",".join(VARIANTS), help=f"comma-separated, from {list(VARIANTS)}")
+    ap.add_argument("--variants", default=None, help=f"comma-separated, from {list(VARIANTS)} (default: all)")
     ap.add_argument("--thinking", default=None, help="comma-separated: off,on (default: off,on for anthropic, off otherwise)")
     ap.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
                     help="Claude API only: output_config.effort for every call (default: each model's own default)")
@@ -107,7 +129,9 @@ def main(argv=None):
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--cases", type=Path, default=CASES_PATH)
     ap.add_argument("--filter", default=None, help="only cases whose id contains this substring")
-    ap.add_argument("--limit", type=int, default=None, help="max cases (for smoke tests)")
+    ap.add_argument("--limit", type=int, default=None, help="max cases")
+    ap.add_argument("--smoke", action="store_true",
+                    help="cheap check before the full run: ~11 cases covering every code path, neutral variant only")
     ap.add_argument("--judge", default="jev", choices=["jev", "llm", "regex"],
                     help="jev: System One decision model via OpenRouter's Decisions API (default); "
                          "llm: chat model; regex: offline fallback")
@@ -135,7 +159,7 @@ def main(argv=None):
         ap.error("--judge llm needs --judge-model (or use --judge jev / regex)")
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    variants = [v.strip() for v in args.variants.split(",") if v.strip()]
+    variants = [v.strip() for v in (args.variants or ("neutral" if args.smoke else ",".join(VARIANTS))).split(",") if v.strip()]
     thinking = [t.strip() for t in args.thinking.split(",") if t.strip()]
     for v in variants:
         if v not in VARIANTS:
@@ -148,6 +172,8 @@ def main(argv=None):
     cases = load_cases(args.cases)
     if args.filter:
         cases = [c for c in cases if args.filter in c.id]
+    if args.smoke:
+        cases = smoke_cases(cases, sessions)
     if args.limit:
         cases = cases[: args.limit]
 

@@ -270,6 +270,16 @@ def test_time_end_to_end_with_mock(tmp_path):
     assert "## Time" in render(rows)
 
 
+def test_smoke_selection_covers_every_path(sessions, time_sessions):
+    allsess = {**sessions, **time_sessions}
+    picked = run.smoke_cases(load_cases(), allsess)
+    assert len(picked) <= 12
+    assert {c.type for c in picked if c.expected == "flag"} == {c.type for c in load_cases()}
+    assert any(allsess[c.session_id].kind == "chat" and c.expected == "flag" for c in picked)
+    timed = [c for c in picked if c.type == "time"]
+    assert {c.expected for c in timed} == {"flag", "proceed"} and len({c.probe_source_id for c in timed}) == 1
+
+
 # ---------- Claude API provider (fake SDK client, no network)
 
 class FakeMessages:
