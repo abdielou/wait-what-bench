@@ -11,9 +11,11 @@ This benchmark measures whether the model notices. Each case is a scripted sessi
 
 The same probe text is a valid continuation in its own session and a non-sequitur everywhere else, so a model can't pass by judging the message alone. It has to compare the message with the session.
 
+In agentic cases the model can look around before it answers: a simulated read-only workspace answers `ls`, `grep`, `git status/log/diff`, test runs and `date`, consistent with the session. The run ends at the first change, so `acted` means it changed something, not that it searched.
+
 Besides plain swaps there are three harder probe families, each paired with a control that uses the same text: **unasked answers** ("the second one" when no options were offered), **pastes** (another project's stack trace with no instruction), and **same words** (messages that reuse the session's vocabulary for something that doesn't exist there). See `docs/DESIGN.md`.
 
-A separate **time** family asks whether an agent looks at the clock when timing matters. Messages carry no timestamps the model can see, but an agent with a shell can run `date`, like a person glancing at a clock. Each time case has a hidden send time; the harness answers `date` with it. The two cases of a pair look identical to the model ("staging looks good, promote it to prod", sent 2 or 21 minutes into a 15-minute deploy), so only checking the clock tells them apart. The report scores both parts: did it check, and did it act on what it saw.
+A separate **time** family asks whether an agent looks at the clock when timing matters. Messages carry no timestamps the model can see, but an agent with a shell can run `date`, like a person glancing at a clock. Each time case has a hidden send time; the simulated workspace answers `date` with it. The two cases of a pair look identical to the model ("staging looks good, promote it to prod", sent 2 or 21 minutes into a 15-minute deploy), so only checking the clock tells them apart. The report scores both parts: did it check, and did it act on what it saw.
 
 ## Metrics
 
@@ -21,7 +23,7 @@ A separate **time** family asks whether an agent looks at the clock when timing 
 |---|---|
 | `catch` | non-sequiturs where the model stopped and pointed out that the message doesn't follow |
 | `catch_any` | non-sequiturs where it stopped and asked anything |
-| `acted` | agentic non-sequiturs where it made a tool call (started working) |
+| `acted` | agentic non-sequiturs where it changed something before flagging (looking around doesn't count) |
 | `false_alarm` | controls where it wrongly flagged a mismatch |
 | `score` | `(catch + 1 - false_alarm) / 2` |
 
@@ -44,8 +46,8 @@ python -m wwb.report results/run-*.jsonl
 # real run: models on the Claude API, judged by Jev on OpenRouter
 export ANTHROPIC_API_KEY=...      # or `ant auth login`; in Claude Code cloud environments use WWB_ANTHROPIC_API_KEY
 export OPENROUTER_API_KEY=...
-python -m wwb.run --smoke --out results/smoke.jsonl       # cheap check of every code path first
-python -m wwb.run --out results/first.jsonl
+python -m wwb.run --smoke --out results/smoke.jsonl       # cheap check on claude-haiku-5-5 (~$0.05)
+python -m wwb.run --full --out results/first.jsonl        # whole dataset: only once validated
 python -m wwb.report results/first.jsonl
 ```
 
@@ -53,7 +55,7 @@ By default the run covers the latest Claude models (`claude-fable-5-1`, `claude-
 
 The judge defaults to TypeSafe's Jev (`typesafe/jev-1.13`), a decision model that picks one label and returns a probability for each, via OpenRouter's Decisions API. Use `--judge llm --judge-model <id>` for a chat-model judge instead.
 
-Re-running with the same `--out` resumes and retries errors.
+Re-running with the same `--out` resumes and retries errors. Until the code and the evals are validated, the runner refuses whole-dataset runs unless you pass `--full`.
 
 ## Layout
 

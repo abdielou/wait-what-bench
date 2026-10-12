@@ -1,9 +1,10 @@
 """Run the benchmark.
 
-Each case = a scripted session history + one probe message. We generate exactly
-one assistant response per (case, model, variant, thinking, sample) and label it.
-Time cases are the exception: if the model checks the clock (`date`) or a declared
-status command, the harness answers with the case's hidden time and lets it go on.
+Each case = a scripted session history + one probe message. We generate one assistant
+response per (case, model, variant, thinking, sample) and label it. In agentic cases the
+model may look around first: read-only calls (ls, grep, git status, tests, `date`, status
+commands) are answered by a simulated workspace (sandbox.py) and the model continues, until
+it changes something, replies, makes a call the sandbox can't simulate, or runs out of steps.
 
 Examples:
   python -m wwb.run --provider mock --models mock/eager,mock/paranoid --judge regex
@@ -27,16 +28,18 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .clock import answer_tool_call, clock_output, parse_time
+from .clock import clock_output, parse_time
 from .data import CASES_PATH, case_history, load_all_sessions, load_cases, to_openai_messages
-from .judge import jev_label, llm_label, regex_label
+from .judge import jev_label, llm_label, regex_label, trace_text
 from .prompts import VARIANTS, system_prompt
 from .providers import LATEST_ANTHROPIC_MODELS, AnthropicProvider, MockProvider, OpenRouterProvider, get_provider
+from .sandbox import Sandbox
 from .tools import TOOLS
 
 
 DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
-MAX_CLOCK_ROUNDS = 3  # time cases: harness-answered tool rounds before the response must end
+MAX_STEPS = 8  # agentic cases: rounds of read-only calls answered before the response must end
+SMOKE_MODELS = ["claude-haiku-5-5"]  # validation runs use one cheap model
 
 
 def build_messages(session, variant: str, case) -> list[dict]:
@@ -46,23 +49,53 @@ def build_messages(session, variant: str, case) -> list[dict]:
     return msgs
 
 
+def describe_call(tc: dict) -> str:
+    try:
+        a = json.loads(tc.get("arguments") or "{}")
+    except json.JSONDecodeError:
+        a = {}
+    if tc.get("name") == "run_command":
+        return str(a.get("command", ""))
+    if tc.get("name") == "read_file":
+        return f"read_file {a.get('path', '')}"
+    if tc.get("name") == "grep":
+        return f"grep {a.get('pattern', '')!r} {a.get('path') or '.'}"
+    return f"{tc.get('name')} {json.dumps(a)[:200]}"
+
+
 def respond(provider, model, msgs, tools, thinking, temperature, case, session):
-    """The model's response to the probe, plus a trace of the tool calls the harness answered.
-    Only time cases get answers: `date` gets the hidden time, declared status commands get
-    their state at that time. Any other tool call is a real action and ends the response."""
+    """The model's response to the probe, a trace of what it looked at, and how the run ended.
+
+    Agentic cases run in a simulated read-only workspace (sandbox.py). Read-only calls are
+    answered and the model continues, until it changes something ("action"), replies without
+    tools ("answer"), makes a call the sandbox can't simulate ("unsupported"), or keeps looking
+    for more than MAX_STEPS rounds ("step_cap")."""
     trace: list[dict] = []
     r = provider.complete(model, msgs, tools=tools, thinking=thinking, temperature=temperature)
-    if not case.now:
-        return r, trace
-    now = parse_time(case.now)
+    if not tools:
+        return r, trace, "error" if r.error else "refusal" if r.stop_reason == "refusal" else "answer"
+    box = Sandbox(session, parse_time(case.now) if case.now else None)
     msgs = list(msgs)
-    for rnd in range(MAX_CLOCK_ROUNDS):
-        if r.error or not r.tool_calls:
-            break
-        answers = [answer_tool_call(tc, now, session.mock_commands) for tc in r.tool_calls]
-        if any(a is None for a in answers):
-            break
-        calls = [{"id": tc.get("id") or f"call_clock_{rnd}_{i}", "type": "function",
+    step = 0
+    while True:
+        if r.error:
+            return r, trace, "error"
+        if r.stop_reason == "refusal":
+            return r, trace, "refusal"
+        if not r.tool_calls:
+            return r, trace, "answer"
+        results = [box.run(tc) for tc in r.tool_calls]
+        step += 1
+        entries = [{"step": step, "said": r.text if i == 0 else "", "tool": tc["name"], "command": describe_call(tc),
+                    "kind": x.kind, "output": x.output[:1500], "clock": x.clock, "state": x.state}
+                   for i, (tc, x) in enumerate(zip(r.tool_calls, results))]
+        if any(x.kind == "action" for x in results):
+            return r, trace, "action"
+        if any(x.kind == "unsupported" for x in results):
+            return r, trace + [e for e in entries if e["kind"] == "unsupported"], "unsupported"
+        if step > MAX_STEPS:
+            return r, trace, "step_cap"
+        calls = [{"id": tc.get("id") or f"call_sim_{step}_{i}", "type": "function",
                   "function": {"name": tc["name"], "arguments": tc.get("arguments", "")}}
                  for i, tc in enumerate(r.tool_calls)]
         assistant = {"role": "assistant", "content": r.text or None, "tool_calls": calls}
@@ -71,11 +104,10 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
         if r.raw_content is not None:
             assistant["native_content"] = r.raw_content  # Claude API: replay the exact blocks
         msgs.append(assistant)
-        for call, (kind, command, output) in zip(calls, answers):
-            msgs.append({"role": "tool", "tool_call_id": call["id"], "content": output})
-            trace.append({"kind": kind, "command": command, "output": output})
+        for call, x in zip(calls, results):
+            msgs.append({"role": "tool", "tool_call_id": call["id"], "content": x.output})
+        trace += entries
         r = provider.complete(model, msgs, tools=tools, thinking=thinking, temperature=temperature)
-    return r, trace
 
 
 def smoke_cases(cases, sessions) -> list:
@@ -131,7 +163,10 @@ def main(argv=None):
     ap.add_argument("--filter", default=None, help="only cases whose id contains this substring")
     ap.add_argument("--limit", type=int, default=None, help="max cases")
     ap.add_argument("--smoke", action="store_true",
-                    help="cheap check before the full run: ~11 cases covering every code path, neutral variant only")
+                    help="cheap check: ~11 cases covering every code path, neutral variant only, "
+                         f"default models {','.join(SMOKE_MODELS)}")
+    ap.add_argument("--full", action="store_true",
+                    help="allow a real run over the whole dataset (off until the code and evals are validated)")
     ap.add_argument("--judge", default="jev", choices=["jev", "llm", "regex"],
                     help="jev: System One decision model via OpenRouter's Decisions API (default); "
                          "llm: chat model; regex: offline fallback")
@@ -143,8 +178,11 @@ def main(argv=None):
 
     if args.provider == "mock":
         args.judge = "regex"
+    if args.provider != "mock" and not (args.smoke or args.limit or args.filter or args.full):
+        ap.error("full runs are off until the code and the evals are validated: use --smoke "
+                 "(or --limit / --filter), or pass --full to run the whole dataset")
     if args.provider == "anthropic":
-        args.models = args.models or ",".join(LATEST_ANTHROPIC_MODELS)
+        args.models = args.models or ",".join(SMOKE_MODELS if args.smoke else LATEST_ANTHROPIC_MODELS)
         args.thinking = args.thinking or "off,on"
         if args.temperature is not None:
             ap.error("current Claude models reject non-default sampling parameters; drop --temperature")
@@ -222,19 +260,17 @@ def main(argv=None):
         sess = sessions[c.session_id]
         msgs = build_messages(sess, v, c)
         tools = TOOLS if sess.kind == "agentic" else None
-        r, trace = respond(provider, m, msgs, tools, t if args.provider != "mock" else None,
-                           args.temperature, c, sess)
-        # Clock and status checks are reading, not acting (they only remain here if the rounds ran out).
-        actions = [tc for tc in r.tool_calls
-                   if not (c.now and answer_tool_call(tc, parse_time(c.now), sess.mock_commands))]
-        acted = bool(actions)
+        r, trace, ended = respond(provider, m, msgs, tools, t if args.provider != "mock" else None,
+                                  args.temperature, c, sess)
+        acted = ended == "action"  # changed something; looking around doesn't count
         if r.error:
             label, reason = "ERROR", r.error
-        elif r.stop_reason == "refusal":  # a safety classifier declined; nothing for the judge to read
+        elif ended == "refusal":  # a safety classifier declined; nothing for the judge to read
             label, reason = "OTHER", f"refusal ({r.usage.get('refusal_category')})"
         elif args.judge in ("jev", "llm"):
             judge = jev_label if args.judge == "jev" else llm_label
-            label, reason = judge(judge_provider, args.judge_model, sess.summary, c.probe, r.text, actions)
+            label, reason = judge(judge_provider, args.judge_model, sess.summary, c.probe, r.text, r.tool_calls,
+                                  trace=trace_text(trace), acted=acted)
         else:
             label, reason = regex_label(r.text, acted), "regex"
         return {
@@ -242,8 +278,9 @@ def main(argv=None):
             "category": c.category, "expected": c.expected, "difficulty": c.difficulty,
             "type": c.type, "ending_id": c.ending_id,
             "now": c.now, "critical": c.meta.get("critical"),
-            "checked_clock": any(x["kind"] == "clock" for x in trace),
-            "checked_state": any(x["kind"] == "state" for x in trace), "tool_trace": trace,
+            "ended": ended, "steps": max((x["step"] for x in trace), default=0),
+            "checked_clock": any(x["clock"] for x in trace),
+            "checked_state": any(x["state"] for x in trace), "tool_trace": trace,
             "donor_session_id": c.donor_session_id,
             "provider": args.provider, "model": m, "variant": v, "thinking": t,
             "effort": args.effort or "default", "sample": s,

@@ -275,7 +275,7 @@ class MockProvider:
     """Deterministic fake models for testing the pipeline offline.
 
     model names:
-      mock/eager     always proceeds (tool call in agentic sessions, an answer in chat)
+      mock/eager     always proceeds (agentic: greps once, then writes a file; chat: answers)
       mock/paranoid  always flags the message as not following from the session
       mock/oracle    flags exactly the cases that are non-sequiturs (uses the case label; tests only).
                      In time cases it runs `date` first, since only the clock tells a pair apart.
@@ -318,8 +318,12 @@ class MockProvider:
         if behavior == "paranoid":
             return Response(text=self.FLAG)
         if behavior == "eager":
+            if tools and messages[-1]["role"] == "tool":  # looked around already: now change something
+                return Response(text="Making the change.", tool_calls=[
+                    {"id": "call_write", "name": "write_file", "arguments": json.dumps({"path": "notes.md", "content": probe})}])
             if tools:
-                return Response(text="On it.", tool_calls=[{"name": "grep", "arguments": json.dumps({"pattern": probe.split()[0]})}])
+                return Response(text="On it.", tool_calls=[
+                    {"id": "call_grep", "name": "grep", "arguments": json.dumps({"pattern": probe.split()[0]})}])
             return Response(text=f"Sure! Here's what you asked for regarding: {probe!r}.")
         raise ValueError(f"unknown mock model {model!r}")
 

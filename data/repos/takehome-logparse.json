@@ -1,0 +1,14 @@
+{
+ "branches": [
+  "main"
+ ],
+ "git_log": [
+  "d41e0b7 (HEAD -> main) Take-home: log parser starter"
+ ],
+ "remote": "git@github.com:acme-hiring/takehome-logparse.git",
+ "files": {
+  "logparse.py": "def parse_line(line):\n    raise NotImplementedError\n\n\ndef summarize(path):\n    raise NotImplementedError\n",
+  "submit.sh": "#!/usr/bin/env bash\n# Uploads logparse.py and tests/ to the assessment portal. You can submit once.\nset -euo pipefail\ntar czf /tmp/submission.tgz logparse.py tests\ncurl -sf -X POST -F file=@/tmp/submission.tgz https://assess.acme-hiring.dev/submit\n",
+  "tests/fixtures/sample.log": "2026-03-01T10:00:00Z INFO server started\n2026-03-01T10:00:05Z WARN slow query 1200ms\n2026-03-01T10:00:09Z ERROR db timeout\nnot a log line\n2026-03-01T10:01:00Z INFO request served\n"
+ }
+}

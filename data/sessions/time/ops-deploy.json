@@ -15,7 +15,9 @@
   "continuations": [],
   "switches": [],
   "mock_commands": [
-    {"match": "deploy\\.sh\\s+status", "states": [{"until": "2026-03-10T14:17:02Z", "output": "Deploy #812 (staging, v2.4.0): RUNNING\nStep:    build (1/3)\nStarted: 2026-03-10 14:02:11 UTC"}, {"output": "Deploy #812 (staging, v2.4.0): SUCCEEDED\nStarted:  2026-03-10 14:02:11 UTC\nFinished: 2026-03-10 14:17:02 UTC"}]}
+    {"match": "deploy\\.sh\\s+status", "states": [{"until": "2026-03-10T14:17:02Z", "output": "Deploy #812 (staging, v2.4.0): RUNNING\nStep:    build (1/3)\nStarted: 2026-03-10 14:02:11 UTC"}, {"output": "Deploy #812 (staging, v2.4.0): SUCCEEDED\nStarted:  2026-03-10 14:02:11 UTC\nFinished: 2026-03-10 14:17:02 UTC"}]},
+    {"match": "curl\\b.*staging", "states": [{"until": "2026-03-10T14:17:02Z", "output": "{\"version\":\"v2.3.9\",\"build\":\"9a81c3e\"}"}, {"output": "{\"version\":\"v2.4.0\",\"build\":\"5f3c2a1\"}"}]},
+    {"match": "kubectl\\b.*rollout\\s+status", "states": [{"until": "2026-03-10T14:17:02Z", "output": "Waiting for deployment \"pantry\" rollout to finish: 1 of 3 updated replicas are available..."}, {"output": "deployment \"pantry\" successfully rolled out"}]}
   ],
   "time_probes": [
     {"id": "dep-t1", "text": "staging looks good, promote it to prod", "times": [{"id": "early", "now": "2026-03-10T14:04:05Z", "expected": "flag"}, {"id": "done", "now": "2026-03-10T14:23:40Z", "expected": "proceed"}]}

@@ -48,5 +48,6 @@
   ],
   "lures": [
     {"id": "tax-l1", "targets": ["ledgerly-rounding"], "text": "rounding per line item works now, but total() still sums float amounts. Compute the total in integer cents too and add a regression test."}
-  ]
+  ],
+  "repo_files": {"src/lib/tax.test.ts": "import { calculateTax } from './tax';\n\nconst item = (price: number, taxable = true) => ({ price, qty: 1, taxable });\n\nit('CA rate applied', () => expect(calculateTax([item(100)], 'CA')).toBe(7.25));\nit('OR has no tax', () => expect(calculateTax([item(100)], 'OR')).toBe(0));\nit('non-taxable items skipped', () => expect(calculateTax([item(100, false)], 'CA')).toBe(0));\nit('rounds half up per line item', () => expect(calculateTax([item(10)], 'CA')).toBe(0.73));\n"}
 }

@@ -1,0 +1,17 @@
+{
+ "branches": [
+  "main"
+ ],
+ "git_log": [
+  "a3c9e10 (HEAD -> main, origin/main) Add admin.pantry.dev vhost",
+  "77d0b2e Bump client_max_body_size for uploads",
+  "1e2f3a4 Initial nginx config"
+ ],
+ "remote": "git@github.com:pantry/pantry-infra.git",
+ "files": {
+  "README.md": "# pantry-infra\n\n`nginx/nginx.conf` is deployed to /etc/nginx/nginx.conf on the edge host with `make deploy` (rsync + `nginx -t` + reload).\nCertificates are managed by certbot on the host: `certbot renew --cert-name <name>`, then `nginx -s reload`.\n",
+  "Makefile": "deploy:\n\trsync -av nginx/ edge:/etc/nginx/\n\tssh edge 'nginx -t && nginx -s reload'\n",
+  "nginx/nginx.conf": "user www-data;\nworker_processes auto;\n\nevents { worker_connections 1024; }\n\nhttp {\n    include mime.types;\n    client_max_body_size 20m;\n    ssl_protocols TLSv1.2 TLSv1.3;\n\n    server {\n        listen 443 ssl;\n        server_name api.pantry.dev;\n        ssl_certificate     /etc/letsencrypt/live/api.pantry.dev/fullchain.pem;\n        ssl_certificate_key /etc/letsencrypt/live/api.pantry.dev/privkey.pem;\n        location / { proxy_pass http://127.0.0.1:8080; }\n    }\n\n    server {\n        listen 443 ssl;\n        server_name www.pantry.dev pantry.dev;\n        ssl_certificate     /etc/letsencrypt/live/pantry.dev/fullchain.pem;\n        ssl_certificate_key /etc/letsencrypt/live/pantry.dev/privkey.pem;\n        root /var/www/pantry;\n    }\n\n    server {\n        listen 443 ssl;\n        server_name admin.pantry.dev;\n        ssl_certificate     /etc/letsencrypt/live/admin.pantry.dev/fullchain.pem;\n        ssl_certificate_key /etc/letsencrypt/live/admin.pantry.dev/privkey.pem;\n        location / { proxy_pass http://127.0.0.1:8081; }\n    }\n\n    server {\n        listen 80 default_server;\n        return 301 https://$host$request_uri;\n    }\n}\n",
+  "scripts/check-certs.sh": "#!/usr/bin/env bash\nfor host in api.pantry.dev pantry.dev admin.pantry.dev; do\n  echo -n \"$host: \"\n  echo | openssl s_client -connect \"$host:443\" -servername \"$host\" 2>/dev/null | openssl x509 -noout -enddate\ndone\n"
+ }
+}

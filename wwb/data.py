@@ -40,6 +40,8 @@ class Session:
     clock: dict = field(default_factory=dict)
     time_probes: list[dict] = field(default_factory=list)
     mock_commands: list[dict] = field(default_factory=list)
+    # Sandbox (sandbox.py): files this session's branch adds to data/repos/<repo>.json.
+    repo_files: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -69,7 +71,7 @@ def load_session(path: Path) -> Session:
         continuations=d.get("continuations", []), switches=d.get("switches", []),
         question_endings=d.get("question_endings", []), pastes=d.get("pastes", []),
         lures=d.get("lures", []), clock=d.get("clock", {}), time_probes=d.get("time_probes", []),
-        mock_commands=d.get("mock_commands", []),
+        mock_commands=d.get("mock_commands", []), repo_files=d.get("repo_files", {}),
     )
 
 

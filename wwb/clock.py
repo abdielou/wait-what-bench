@@ -8,7 +8,7 @@ checking the clock.
 
 Sessions can also declare `mock_commands`: read-only status commands whose output may
 depend on the hidden time (a deploy that is RUNNING until 14:17 and SUCCEEDED after).
-Any other tool call is a real action and ends the response.
+The sandbox (sandbox.py) uses both when it answers the model's commands.
 """
 from __future__ import annotations
 
@@ -86,21 +86,3 @@ def state_output(mock: dict, now: datetime) -> str:
         if "until" not in state or now < parse_time(state["until"]):
             return state["output"]
     return mock["states"][-1]["output"]
-
-
-def answer_tool_call(tool_call: dict, now: datetime, mock_commands=()) -> tuple[str, str, str] | None:
-    """(kind, command, output) for a call the harness answers ("clock" or "state"),
-    or None for a real action, which ends the response."""
-    if tool_call.get("name") != "run_command":
-        return None
-    try:
-        command = json.loads(tool_call.get("arguments") or "{}").get("command") or ""
-    except (json.JSONDecodeError, AttributeError):
-        return None
-    out = clock_output(command, now)
-    if out is not None:
-        return "clock", command, out
-    for mock in mock_commands:
-        if re.search(mock["match"], command):
-            return "state", command, state_output(mock, now)
-    return None

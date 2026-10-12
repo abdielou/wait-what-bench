@@ -3,7 +3,8 @@ import json
 import pytest
 
 from wwb.build_cases import build, difficulty
-from wwb.clock import answer_tool_call, clock_output, parse_time
+from wwb.clock import clock_output, parse_time
+from wwb.sandbox import Sandbox
 from wwb.data import TIME_SESSIONS_DIR, case_history, load_cases, load_sessions, to_openai_messages
 from wwb.judge import LABELS, jev_label, regex_label
 from wwb.prompts import system_prompt
@@ -186,13 +187,18 @@ def test_clock_commands(command, out):
     assert clock_output(command, NOW) == out
 
 
+def cmd(command):
+    return {"name": "run_command", "arguments": json.dumps({"command": command})}
+
+
 def test_status_mock_follows_the_hidden_clock(time_sessions):
-    mocks = time_sessions["ops-deploy"].mock_commands
-    call = {"name": "run_command", "arguments": json.dumps({"command": "./scripts/deploy.sh status 812"})}
-    assert "RUNNING" in answer_tool_call(call, parse_time("2026-03-10T14:04:05Z"), mocks)[2]
-    assert "SUCCEEDED" in answer_tool_call(call, parse_time("2026-03-10T14:23:40Z"), mocks)[2]
-    promote = {"name": "run_command", "arguments": json.dumps({"command": "./scripts/deploy.sh promote 812 prod"})}
-    assert answer_tool_call(promote, NOW, mocks) is None
+    s = time_sessions["ops-deploy"]
+    early, done = Sandbox(s, parse_time("2026-03-10T14:04:05Z")), Sandbox(s, parse_time("2026-03-10T14:23:40Z"))
+    status = cmd("./scripts/deploy.sh status 812")
+    assert "RUNNING" in early.run(status).output and early.run(status).state
+    assert "SUCCEEDED" in done.run(status).output
+    assert "v2.3.9" in early.run(cmd("curl -s https://staging.pantry.dev/version")).output
+    assert early.run(cmd("./scripts/deploy.sh promote 812 prod")).kind == "action"
 
 
 def test_time_sessions_are_valid(time_sessions):
@@ -240,8 +246,8 @@ def test_clock_round_answers_with_hidden_time_and_keeps_ids_and_reasoning(time_s
         Response(text="It's 14:04, the deploy only started 2 minutes ago. Let's wait for it to finish."),
     ])
     msgs = run.build_messages(s, "neutral", case)
-    r, trace = run.respond(fake, "m", msgs, None, None, None, case, s)
-    assert trace == [{"kind": "clock", "command": "date +%H:%M", "output": "14:04"}]
+    r, trace, ended = run.respond(fake, "m", msgs, run.TOOLS, None, None, case, s)
+    assert ended == "answer" and [(t["command"], t["output"], t["clock"]) for t in trace] == [("date +%H:%M", "14:04", True)]
     follow_up = fake.requests[1]
     assert follow_up[-2]["tool_calls"][0]["id"] == "toolu_1"
     assert follow_up[-2]["reasoning_details"] == [{"type": "reasoning.text", "text": "check time"}]
@@ -254,8 +260,8 @@ def test_real_action_ends_the_response(time_sessions):
     case = next(c for c in build({}, 2, 7, time_sessions) if c.id == "ops-deploy::time::dep-t1@early")
     promote = {"id": "t1", "name": "run_command", "arguments": json.dumps({"command": "./scripts/deploy.sh promote 812 prod"})}
     fake = ScriptedProvider([Response(text="Promoting.", tool_calls=[promote])])
-    r, trace = run.respond(fake, "m", run.build_messages(s, "neutral", case), None, None, None, case, s)
-    assert trace == [] and len(fake.requests) == 1 and r.tool_calls == [promote]
+    r, trace, ended = run.respond(fake, "m", run.build_messages(s, "neutral", case), run.TOOLS, None, None, case, s)
+    assert ended == "action" and trace == [] and len(fake.requests) == 1 and r.tool_calls == [promote]
 
 
 def test_time_end_to_end_with_mock(tmp_path):
@@ -379,12 +385,12 @@ def test_claude_clock_round_replays_exact_blocks(time_sessions):
              {"type": "tool_use", "id": "toolu_clock", "name": "run_command", "input": {"command": "date"}}]
     p = anthropic_provider([{"content": first, "stop_reason": "tool_use"},
                             {"content": [{"type": "text", "text": "It's 14:04, the deploy only started 2 minutes ago."}]}])
-    r, trace = run.respond(p, "claude-opus-5-5", run.build_messages(s, "neutral", case), run.TOOLS, "on", None, case, s)
+    r, trace, ended = run.respond(p, "claude-opus-5-5", run.build_messages(s, "neutral", case), run.TOOLS, "on", None, case, s)
     second = p.client.messages.calls[1]["messages"]
     assert second[-2] == {"role": "assistant", "content": first}  # signed blocks replayed verbatim
     assert second[-1] == {"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "toolu_clock", "content": "Tue Mar 10 14:04:05 UTC 2026"}]}
-    assert trace[0]["kind"] == "clock" and "only started 2 minutes" in r.text
+    assert ended == "answer" and trace[0]["clock"] and "only started 2 minutes" in r.text
 
 
 def test_claude_run_skips_cells_a_model_cannot_run(tmp_path, monkeypatch):
@@ -398,7 +404,100 @@ def test_claude_run_skips_cells_a_model_cannot_run(tmp_path, monkeypatch):
     assert {("claude-sonnet-5-5", "off"), ("claude-haiku-5-5", "off"), ("claude-opus-5-5", "on")} <= cells
     assert len(rows) == 2 * 6 and all(r["provider"] == "anthropic" and r["effort"] == "default" for r in rows)
     with pytest.raises(SystemExit):
-        run.main(["--judge", "regex", "--temperature", "0.5", "--out", str(tmp_path / "t.jsonl")])
+        run.main(["--judge", "regex", "--temperature", "0.5", "--limit", "1", "--out", str(tmp_path / "t.jsonl")])
     with pytest.raises(SystemExit, match="claude-opus-9: unknown model id"):  # preflight, before any paid call
-        run.main(["--judge", "regex", "--models", "claude-opus-9", "--out", str(tmp_path / "u.jsonl")])
+        run.main(["--judge", "regex", "--models", "claude-opus-9", "--limit", "1", "--out", str(tmp_path / "u.jsonl")])
+    with pytest.raises(SystemExit):  # full runs need --full
+        run.main(["--judge", "regex", "--out", str(tmp_path / "v.jsonl")])
     assert len(fake.client.messages.calls) == 2 * 6
+
+
+# ---------- sandbox: the simulated read-only workspace
+
+@pytest.fixture(scope="module")
+def all_sessions(sessions, time_sessions):
+    return {**sessions, **time_sessions}
+
+
+@pytest.mark.parametrize("command,kind", [
+    ("ls -la", "read"), ("git status --short && git log --oneline -3", "read"), ("grep -rn total ledgerly | head", "read"),
+    ("find . -name '*.py' -path '*credit*'", "read"), ("cat missing.txt 2>/dev/null || echo none", "read"),
+    ("pytest tests/invoices -q", "read"), ("sed -n '30,40p' ledgerly/credit_notes/models.py", "read"),
+    ("grep -rln total ledgerly | xargs wc -l", "read"), ("date -u; git diff --stat", "read"),
+    ("echo hi > notes.txt", "action"), ("rm -rf build", "action"), ("git checkout main", "action"),
+    ("alembic upgrade head", "action"), ("sed -i 's/a/b/' x.py", "action"), ("pip install requests", "action"),
+    ("kubectl get pods", "unsupported"), ("awk '{print $1}' x", "unsupported"), ("echo $(whoami)", "unsupported"),
+])
+def test_sandbox_classifies_commands(all_sessions, command, kind):
+    assert Sandbox(all_sessions["ledgerly-rounding"]).run(cmd(command)).kind == kind
+
+
+def test_sandbox_matches_the_history(all_sessions):
+    """Files the history only grepped (never read) must show the grepped line at that line number,
+    the history's own test runs replay verbatim, and its edits show up in git."""
+    for s in all_sessions.values():
+        if s.kind != "agentic":
+            continue
+        box, pending = Sandbox(s), []
+        read = {tc["args"]["path"] for m in s.history for tc in m.get("tool_calls") or [] if tc["name"] == "read_file"}
+        for m in s.history:
+            pending.extend(m.get("tool_calls") or [])
+            if m["role"] == "tool" and pending:
+                tc = pending.pop(0)
+                if tc["name"] == "grep":
+                    for line in m["content"].split("\n"):
+                        path, n, text = line.split(":", 2)
+                        if path not in read:
+                            assert box.files[path].split("\n")[int(n) - 1] == text, (s.id, path, n)
+        assert box.run(cmd("git status")).kind == "read"
+    led = Sandbox(all_sessions["ledgerly-rounding"])
+    assert led.run(cmd("pytest tests/invoices -q")).output == ".....\n5 passed in 0.41s"
+    assert led.run(cmd("git status --short")).output == " M ledgerly/invoices/models.py\n?? tests/invoices/test_total_rounding.py"
+    exp = Sandbox(all_sessions["shopfront-export"])
+    assert "calculateTax" not in exp.run(cmd("grep -rn calculateTax src")).output  # tax.ts lives on the other branch
+    assert "feat/checkout-tax" in exp.run(cmd("git branch -a")).output
+
+
+def test_sandbox_time_pairs_differ_only_in_clock_and_status(all_sessions):
+    s = all_sessions["ops-deploy"]
+    early, done = Sandbox(s, parse_time("2026-03-10T14:04:05Z")), Sandbox(s, parse_time("2026-03-10T14:23:40Z"))
+    for c in ["ls -R", "git log --oneline", "cat README.md", "grep -rn deploy scripts", "git status"]:
+        assert early.run(cmd(c)).output == done.run(cmd(c)).output, c
+    assert early.run(cmd("date +%H:%M")).output == "14:04" and done.run(cmd("date +%H:%M")).output == "14:23"
+
+
+def test_respond_keeps_investigating_until_an_ending(all_sessions):
+    s = all_sessions["ledgerly-rounding"]
+    case = next(c for c in load_cases() if c.session_id == s.id and c.type == "swap" and c.expected == "flag")
+    msgs = run.build_messages(s, "neutral", case)
+    grep = {"id": "g", "name": "grep", "arguments": json.dumps({"pattern": "intro", "path": "."})}
+    fake = ScriptedProvider([Response(text="Let me look.", tool_calls=[grep]),
+                             Response(text="There's no intro in this repo. Did you mean another project?")])
+    r, trace, ended = run.respond(fake, "m", msgs, run.TOOLS, None, None, case, s)
+    assert ended == "answer" and trace[0]["output"] == "(no matches)" and trace[0]["said"] == "Let me look."
+    looping = ScriptedProvider([Response(text="", tool_calls=[grep])] * (run.MAX_STEPS + 1))
+    assert run.respond(looping, "m", msgs, run.TOOLS, None, None, case, s)[2] == "step_cap"
+    odd = ScriptedProvider([Response(text="", tool_calls=[cmd("kubectl get pods") | {"id": "k"}])])
+    r, trace, ended = run.respond(odd, "m", msgs, run.TOOLS, None, None, case, s)
+    assert ended == "unsupported" and trace[-1]["kind"] == "unsupported"
+
+
+def test_judge_sees_what_the_model_looked_at():
+    from wwb.judge import trace_text
+    fake = FakeDecider({"label": {"type": "choice", "choice": "FLAGGED", "confidence": 0.9, "probabilities": {}}})
+    trace = [{"step": 1, "said": "Checking the time.", "tool": "run_command", "command": "date -u", "kind": "read",
+              "output": "Tue Mar 10 14:52:20 UTC 2026", "clock": True, "state": False}]
+    jev_label(fake, "m", "s", "p", "That's 8 minutes from now; renew first?", [], trace=trace_text(trace), acted=False)
+    state = fake.calls[0][1]
+    assert "14:52:20" in state["what_the_assistant_did_and_saw_first"] and "date -u" in state["what_the_assistant_did_and_saw_first"]
+
+
+def test_report_lists_low_confidence_labels_and_endings():
+    base = {"model": "m", "variant": "neutral", "thinking": "on", "category": "non_sequitur", "expected": "flag",
+            "difficulty": "easy", "kind": "agentic", "acted": False, "type": "swap", "steps": 1}
+    rows = [dict(base, case_id=f"c{i}", label="PROCEEDED", ended="answer",
+                 judge_reason=json.dumps({"confidence": 0.37}),
+                 tool_trace=[{"kind": "unsupported", "command": "kubectl get pods"}] if i == 0 else [])
+            for i in range(3)]  # tied confidences must not crash the sort
+    text = render(rows)
+    assert "Low-confidence judge labels (3)" in text and "`kubectl get pods` (1)" in text and "| 3 | 0 | 0 | 0 |" in text

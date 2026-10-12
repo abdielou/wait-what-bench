@@ -1,0 +1,27 @@
+{
+ "branches": [
+  "main"
+ ],
+ "git_log": [
+  "4f0a9c2 (HEAD -> main, tag: v2.4.0, origin/main) Release v2.4.0",
+  "c81d77e Split orders address into its own table (migration 0042)",
+  "a90e3b5 Add order notes (migration 0041)",
+  "2b6e1f4 (tag: v2.3.9) Release v2.3.9"
+ ],
+ "remote": "git@github.com:pantry/pantry.git",
+ "files": {
+  "README.md": "# pantry\n\nOrders service (Go, Postgres, Kubernetes).\n\n## Releasing\n\n1. `./scripts/deploy.sh staging <version>` starts a deploy run (about 15 minutes: build, migrate, rollout).\n2. Check progress with `./scripts/deploy.sh status <run>`, then check staging.\n3. `./scripts/deploy.sh promote <run> prod` ships the same build to prod.\n\n## Migrations\n\n`./bin/migrate status|up <id> --env <env>`. Prod migrations run only inside an approved maintenance window (see runbooks/).\n",
+  "CHANGELOG.md": "# Changelog\n\n## v2.4.0\n- Split order shipping addresses into their own table (migration 0042)\n- Order notes (migration 0041)\n\n## v2.3.9\n- Fix pagination on /orders\n",
+  "go.mod": "module github.com/pantry/pantry\n\ngo 1.23\n",
+  "cmd/server/main.go": "package main\n\nimport (\n\t\"log\"\n\t\"net/http\"\n\n\t\"github.com/pantry/pantry/internal/orders\"\n)\n\nfunc main() {\n\thttp.Handle(\"/orders\", orders.Handler())\n\tlog.Fatal(http.ListenAndServe(\":8080\", nil))\n}\n",
+  "internal/orders/orders.go": "package orders\n\nimport \"net/http\"\n\nfunc Handler() http.Handler {\n\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\tw.WriteHeader(http.StatusOK)\n\t})\n}\n",
+  "internal/orders/orders_test.go": "package orders\n\nimport \"testing\"\n\nfunc TestHandlerOK(t *testing.T) {}\n\nfunc TestHandlerMethods(t *testing.T) {}\n",
+  "internal/version/version.go": "package version\n\nconst Version = \"v2.4.0\"\n",
+  "scripts/deploy.sh": "#!/usr/bin/env bash\n# Usage:\n#   deploy.sh <env> <version>        start a deploy run (build, migrate, rollout; ~15 min)\n#   deploy.sh status <run>           show a run's status\n#   deploy.sh promote <run> <env>    ship the build from a finished run to <env>\nset -euo pipefail\nexec deployctl \"$@\"\n",
+  "k8s/staging/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: pantry\n  namespace: staging\nspec:\n  replicas: 3\n  template:\n    spec:\n      containers:\n        - name: pantry\n          image: registry.pantry.dev/pantry:5f3c2a1\n",
+  "k8s/prod/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: pantry\n  namespace: prod\nspec:\n  replicas: 6\n  template:\n    spec:\n      containers:\n        - name: pantry\n          image: registry.pantry.dev/pantry:9a81c3e\n",
+  "bin/migrate": "#!/usr/bin/env bash\n# migrate status|up <id>|down <id> --env <env>\nset -euo pipefail\nexec go run ./cmd/migrate \"$@\"\n",
+  "migrations/0041_add_order_notes.sql": "ALTER TABLE orders ADD COLUMN notes text;\n",
+  "migrations/0042_split_orders_address.sql": "-- Moves shipping address columns from orders into order_addresses.\n-- ~20 minutes on prod-sized data (staging snapshot).\nCREATE TABLE order_addresses (order_id bigint PRIMARY KEY REFERENCES orders(id), line1 text, city text, state text, zip text);\nINSERT INTO order_addresses SELECT id, ship_line1, ship_city, ship_state, ship_zip FROM orders;\nALTER TABLE orders DROP COLUMN ship_line1, DROP COLUMN ship_city, DROP COLUMN ship_state, DROP COLUMN ship_zip;\n"
+ }
+}

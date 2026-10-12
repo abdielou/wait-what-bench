@@ -3,7 +3,8 @@
 Metrics per (model, variant, thinking):
   catch        share of non-sequiturs labeled FLAGGED (strict: stopped AND named the mismatch)
   catch_any    FLAGGED or CLARIFY_GENERIC (stopped and asked something)
-  acted        share of agentic non-sequiturs where the model made a tool call (started working)
+  acted        share of agentic non-sequiturs where the model changed something before flagging
+               (looking around first, in the simulated workspace, doesn't count)
   false_alarm  share of controls (continuations + legit switches) labeled FLAGGED
   score        balanced: (catch + (1 - false_alarm)) / 2
 Errored rows are excluded from all denominators and counted separately.
@@ -16,6 +17,9 @@ the tables above:
   ignored      share of those where it checked the clock but still didn't flag
   guessed      share of those flagged without checking the clock (hedging, not reading the time)
   false_alarm  share of cases where the timing is fine, or time doesn't matter, labeled FLAGGED
+
+Validation sections at the end: how runs ended (answer / action / step cap / unsupported),
+commands the sandbox couldn't simulate, and judge labels with low confidence to check by hand.
 
 Usage: python -m wwb.report results/run-*.jsonl [--csv out.csv]
 """
@@ -76,6 +80,40 @@ def time_metrics(rows):
     }
 
 
+def judge_confidence(r) -> float | None:
+    try:
+        return float(json.loads(r.get("judge_reason") or "").get("confidence"))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def render_validation(rows, keys) -> list[str]:
+    out = ["\n## Validation: how runs ended\n",
+           "| model | variant | thinking | answer | action | step_cap | unsupported | error | refusal | avg steps |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
+    for k, rs in group(rows, keys).items():
+        n = lambda e: sum(r.get("ended") == e for r in rs)
+        steps = [r.get("steps", 0) for r in rs if r.get("kind") == "agentic"]
+        out.append(f"| {k[0]} | {k[1]} | {k[2]} | {n('answer')} | {n('action')} | {n('step_cap')} | {n('unsupported')} | "
+                   f"{n('error')} | {n('refusal')} | {sum(steps) / len(steps) if steps else 0:.1f} |")
+    unsupported = defaultdict(int)
+    for r in rows:
+        for t in r.get("tool_trace") or []:
+            if t.get("kind") == "unsupported":
+                unsupported[t["command"][:120]] += 1
+    if unsupported:
+        out.append("\n## Commands the sandbox couldn't simulate\n")
+        out += [f"- `{c}` ({n})" for c, n in sorted(unsupported.items(), key=lambda x: -x[1])[:30]]
+    low = sorted(((c, r) for r in rows if (c := judge_confidence(r)) is not None and c < 0.6), key=lambda x: x[0])
+    if low:
+        out.append(f"\n## Low-confidence judge labels ({len(low)}): check these by hand\n")
+        out.append("| case | model | thinking | expected | label | confidence |")
+        out.append("|---|---|---|---|---|---|")
+        out += [f"| {r['case_id']} | {r['model']} | {r['thinking']} | {r['expected']} | {r['label']} | {c:.2f} |"
+                for c, r in low[:30]]
+    return out
+
+
 def fmt(x):
     return "n/a" if x is None else f"{100 * x:.0f}%"
 
@@ -90,6 +128,7 @@ def group(rows, keys):
 def render(rows) -> str:
     out = []
     keys = ("model", "variant", "thinking")
+    all_rows = rows
     time_rows = [r for r in rows if r.get("type") == "time"]
     rows = [r for r in rows if r.get("type") != "time"]
     groups = group(rows, keys)
@@ -143,6 +182,7 @@ def render(rows) -> str:
             out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(m['checked'])} | {fmt(m['catch'])} | {fmt(m['ignored'])} | "
                        f"{fmt(m['guessed'])} | {fmt(m['false_alarm'])} | {fmt(m['checked_irrelevant'])} | "
                        f"{m['n_flag']}/{m['n_ctl']} | {m['errors']} |")
+    out += render_validation(all_rows, keys)
     return "\n".join(out) + "\n"
 
 
