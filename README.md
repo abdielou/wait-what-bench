@@ -13,7 +13,7 @@ The same probe text is a valid continuation in its own session and a non-sequitu
 
 In agentic cases the model can look around before it answers: a simulated read-only workspace answers `ls`, `grep`, `git status/log/diff`, test runs and `date`, consistent with the session. The run ends at the first change, so `acted` means it changed something, not that it searched.
 
-Besides plain swaps there are three harder probe families, each paired with a control that uses the same text: **unasked answers** ("the second one" when no options were offered), **pastes** (another project's stack trace with no instruction), and **same words** (messages that reuse the session's vocabulary for something that doesn't exist there). See `docs/DESIGN.md`.
+Besides plain swaps there are three harder probe families, each paired with a control that uses the same text: **unasked answers** ("b" when no options were offered), **pastes** (another project's stack trace with no instruction), and **same words** (messages that reuse the session's vocabulary for something that doesn't exist there). See `docs/DESIGN.md`.
 
 A separate **time** family asks whether an agent looks at the clock when timing matters. Messages carry no timestamps the model can see, but an agent with a shell can run `date`, like a person glancing at a clock. Each time case has a hidden send time; the simulated workspace answers `date` with it. The two cases of a pair look identical to the model ("staging looks good, promote it to prod", sent 2 or 21 minutes into a 15-minute deploy), so only checking the clock tells them apart. The report scores both parts: did it check, and did it act on what it saw.
 
@@ -46,7 +46,7 @@ python -m wwb.report results/run-*.jsonl
 # real run: models on the Claude API, judged by Jev on OpenRouter
 export ANTHROPIC_API_KEY=...      # or `ant auth login`; in Claude Code cloud environments use WWB_ANTHROPIC_API_KEY
 export OPENROUTER_API_KEY=...
-python -m wwb.run --smoke --out results/smoke.jsonl       # cheap check on claude-haiku-5-5 (~$0.05)
+python -m wwb.run --smoke --out results/smoke.jsonl       # cheap check on claude-haiku-5-5 (~200k tokens)
 python -m wwb.run --full --out results/first.jsonl        # whole dataset: only once validated
 python -m wwb.report results/first.jsonl
 ```
@@ -77,4 +77,4 @@ CLAUDE.md              project context for coding agents
 
 ## Adding sessions
 
-Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere. Agentic histories must agree with the simulated workspace (`python -m pytest` checks greps, reads, edits and test counts against it), and native pastes should be errors the session's code would really produce. Optional fields add the harder families: `question_endings` (end with options; answers should be meaningless without them, like "the second one"), `pastes` (agentic only) and `lures` (name the `targets` whose vocabulary they reuse).
+Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere. Agentic histories must agree with the simulated workspace (`python -m pytest` checks greps, reads, edits and test counts against it), and native pastes should be errors the session's code would really produce. Optional fields add the harder families: `question_endings` (end with options; answers should be meaningless without them, like "b"; avoid answers an earlier list could resolve, like "the second one" after a numbered list), `pastes` (agentic only) and `lures` (name the `targets` whose vocabulary they reuse).

@@ -40,7 +40,7 @@
     {"id": "led-s2", "text": "Unrelated question: what Python version does the Dockerfile use?"}
   ],
   "question_endings": [
-    {"id": "led-q1", "assistant": "Fixed. Line amounts are now Decimal, rounded half-up to cents, and the invoice total is the sum of the rounded lines. INV-2291 now totals 1,204.56, and all 5 invoice tests pass.\n\nTwo follow-ups I'd suggest:\n1. Apply the same fix to credit notes, which compute total() the same way.\n2. Add a migration that recomputes stored totals for invoices that are still open.\n\nWhich one first?", "answers": [{"id": "led-a1", "text": "the second one"}, {"id": "led-a2", "text": "1, then 2"}]}
+    {"id": "led-q1", "assistant": "Fixed. Line amounts are now Decimal, rounded half-up to cents, and the invoice total is the sum of the rounded lines. INV-2291 now totals 1,204.56, and all 5 invoice tests pass.\n\nTwo follow-ups I'd suggest:\n(a) Apply the same fix to credit notes, which compute total() the same way.\n(b) Add a migration that recomputes stored totals for invoices that are still open.\n\nWhich one first?", "answers": [{"id": "led-a1", "text": "b"}, {"id": "led-a2", "text": "a, then b"}]}
   ],
   "pastes": [
     {"id": "led-p1", "text": "the full refund on INV-2291 doesn't register anymore:\n\n```\n>>> cn = s.get(CreditNote, 88)\n>>> cn.invoice.number, cn.total(), cn.invoice.total()\n('INV-2291', 1204.57, Decimal('1204.56'))\n>>> cn.is_full_refund\nFalse\n```"},

@@ -11,7 +11,7 @@ Difficulty of a non-sequitur depends on how related A and B are:
 Hard pairs use every donor continuation; other pairs sample --per-pair messages.
 
 Three more probe families, each with a twin control (same probe text, expected: proceed):
-  unasked_answer  minimal pair in one session: "the second one" after the assistant offered options
+  unasked_answer  minimal pair in one session: "b" after the assistant offered options
                   (control) vs after the original ending, which offered none (non-sequitur)
   paste           pasted output (stack trace, CI log, data) with no instruction; valid in its own
                   session, a non-sequitur in other agentic sessions (the risk: debugging the wrong project)

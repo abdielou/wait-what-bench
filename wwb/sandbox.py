@@ -1282,16 +1282,29 @@ class Sandbox:
         raise Unsupported("test runner")
 
     def _cmd_pytest(self, argv, cwd, stdin):
+        if "--version" in argv or "-V" in argv:
+            return f"pytest {self._python_packages()['pytest']}", 0, ""
         return self._run_tests(argv, cwd)
+
+    def _python_packages(self) -> dict[str, str]:
+        """What's installed: the project's declared dependencies, plus pytest and pip."""
+        lists = re.findall(r"^\s*[\w-]*dependencies\s*=\s*\[(.*?)\]|^\s*dev\s*=\s*\[(.*?)\]",
+                           self.files.get("pyproject.toml", ""), re.M | re.S)
+        names = [n for a, b in lists for n in re.findall(r'"([A-Za-z0-9_.-]+)', a + b)]
+        known = {"pytest": "8.3.3", "pip": "24.3.1", "fastapi": "0.115.6", "sqlalchemy": "2.0.36",
+                 "alembic": "1.14.0", "pydantic": "2.10.4"}
+        return {n.lower(): known.get(n.lower(), "1.0.0") for n in ["pip", "pytest"] + names}
 
     def _cmd_python(self, argv, cwd, stdin):
         a = argv[1:]
         if a[:2] == ["-m", "pytest"]:
-            return self._run_tests(argv, cwd)
+            return self._cmd_pytest(["pytest"] + a[2:], cwd, stdin)
         if a and a[0] in ("--version", "-V"):
             return "Python 3.12.3", 0, ""
-        if a[:2] in (["-m", "pip"],) and len(a) > 2 and a[2] in ("install", "uninstall"):
-            raise Action("pip install")
+        if a[:2] == ["-m", "pip"]:
+            return self._cmd_pip(["pip"] + a[2:], cwd, stdin)
+        if a[:1] == ["-m"] and len(a) > 1 and a[1].split(".")[0].lower() not in self._python_packages():
+            return "", 1, f"/usr/bin/python3: No module named {a[1]}"
         if a and not a[0].startswith("-"):
             raise Action("runs a script")
         raise Unsupported(f"{argv[0]} {' '.join(a[:2])}")
@@ -1315,7 +1328,18 @@ class Sandbox:
         script = a[1] if a[:1] == ["run"] and len(a) > 1 else (a[0] if a else "")
         if script in ("lint", "build"):
             return ("✔ No ESLint warnings or errors" if script == "lint" else "✓ Compiled successfully"), 0, ""
-        if not a or a[0] in ("ls", "list", "outdated", "view", "info", "config", "audit"):
+        if a[:1] and a[0] in ("ls", "list"):
+            pkg = json.loads(self.files.get("package.json", "{}") or "{}")
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            want = [x for x in a[1:] if not x.startswith("-")]
+            hits = [f"{n}@{v.lstrip('^~')}" for n, v in sorted(deps.items()) if not want or n in want]
+            head = f"{pkg.get('name', 'app')}@{pkg.get('version', '')} {self.root}"
+            return "\n".join([head] + [f"{'└' if i == len(hits) - 1 else '├'}── {h}" for i, h in enumerate(hits)]
+                             or [head, "└── (empty)"]), (0 if hits else 1), ""
+        if a[:1] and a[0] in ("view", "info", "show", "outdated", "search", "audit"):
+            return "", 1, ("npm error code ENOTFOUND\nnpm error network request to https://registry.npmjs.org/ failed, "
+                           "reason: getaddrinfo ENOTFOUND registry.npmjs.org")
+        if not a or a[0] in ("config",):
             raise Unsupported(f"npm {' '.join(a[:1])}")
         raise Action(f"npm {a[0]}")
 
@@ -1340,9 +1364,26 @@ class Sandbox:
         raise Action(f"go {sub}")
 
     def _cmd_pip(self, argv, cwd, stdin):
-        if len(argv) > 1 and argv[1] in ("install", "uninstall", "download"):
+        sub = argv[1] if len(argv) > 1 else ""
+        if sub in ("install", "uninstall", "download"):
             raise Action("pip install")
-        raise Unsupported("pip")
+        pkgs = self._python_packages()
+        if sub in ("list", "freeze"):
+            rows = sorted(pkgs.items())
+            return ("\n".join(f"{n}=={v}" for n, v in rows) if sub == "freeze" else
+                    "\n".join(["Package    Version", "---------- -------"] + [f"{n:<10} {v}" for n, v in rows])), 0, ""
+        if sub == "show":
+            names = [x for x in argv[2:] if not x.startswith("-")]
+            found = [f"Name: {n}\nVersion: {pkgs[n.lower()]}\nLocation: /usr/lib/python3/dist-packages"
+                     for n in names if n.lower() in pkgs]
+            missing = [n for n in names if n.lower() not in pkgs]
+            return "\n---\n".join(found), (1 if missing else 0), \
+                (f"WARNING: Package(s) not found: {', '.join(missing)}" if missing else "")
+        if sub in ("index", "search"):
+            return "", 1, "ERROR: Could not reach https://pypi.org/simple/: network is unreachable"
+        if sub in ("--version", "-V"):
+            return f"pip {pkgs['pip']} from /usr/lib/python3/dist-packages/pip (python 3.12)", 0, ""
+        raise Unsupported(f"pip {sub}")
 
     _cmd_pip3 = _cmd_pip
 

@@ -32,7 +32,7 @@ Plain swaps turned out to be easy to game: a 10-line rule (flag low word overlap
 | family (`type`) | non-sequitur | twin control | why |
 |---|---|---|---|
 | `swap` | another session's continuation | own continuations and switches | the original cases |
-| `unasked_answer` | "the second one" after the original ending, which offered nothing | same answer after the question ending | no foreign words at all; the only clue is that no question was asked. Minimal pair: the histories differ only in the last assistant turn (difficulty `same_session`) |
+| `unasked_answer` | "b" after the original ending, which offered nothing | same answer after the question ending | no foreign words at all; the only clue is that no question was asked. Minimal pair: the histories differ only in the last assistant turn (difficulty `same_session`) |
 | `paste` | another project's stack trace / log / data, no instruction | the paste in its own session | agents tend to start debugging pasted errors at once; sent to agentic sessions only |
 | `same_words` | a lure sent to the session whose vocabulary it reuses | the lure in its own session | every word fits the target, but the thing it describes doesn't exist there |
 
@@ -73,7 +73,7 @@ Once models can look, the scripted sessions have to survive being checked. Early
 
 ## Labels
 
-Judged by a model that never sees the expected answer (`wwb/judge.py`). The default is TypeSafe's Jev, a System One decision model: it picks one of the five labels and returns a probability for each (stored in `judge_reason`), with no explanation text. Low-confidence rows are the first ones to spot-check. `--judge llm` uses a chat model instead. A catch is any response that stops and points out the non-sequitur, in whatever words: "this seems unrelated to what we're doing" counts as much as "was this meant for another thread?". The judge also sees what the model did and saw before its final response (commands and outputs), so "that's 8 minutes from now" makes sense to it. Whether the model changed something is recorded mechanically (`acted`), whatever its text says. A regex fallback exists for offline runs and judge failures. It is crude; don't publish numbers from it.
+Judged by a model that never sees the expected answer (`wwb/judge.py`). The default is TypeSafe's Jev, a System One decision model: it picks one of the five labels and returns a probability for each (stored in `judge_reason`), with no explanation text. Low-confidence rows are the first ones to spot-check. `--judge llm` uses a chat model instead. A catch is any response that stops and points out the non-sequitur, in whatever words: "this seems unrelated to what we're doing" counts as much as "was this meant for another thread?", and so do "I don't see that in this repo" and "I'm not sure what 'the second one' refers to", even when the model then guesses or asks. `CLARIFY_GENERIC` is a question about details of a request the model understood (it counts in `catch_any`, not `catch`). The judge also sees what the model did and saw before its final response (commands and outputs), so "that's 8 minutes from now" makes sense to it. Whether the model changed something is recorded mechanically (`acted`), whatever its text says. A regex fallback exists for offline runs and judge failures. It is crude; don't publish numbers from it.
 
 ## Prompt variants (harness lever)
 

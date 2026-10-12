@@ -445,6 +445,8 @@ def all_sessions(sessions, time_sessions):
     ("sh -c 'ls tests'", "read"), ("bash -c 'rm -rf x'", "action"), ("ls -d */ | xargs -n1 basename", "read"),
     ("find . -name '*.py' | xargs -I{} sh -c 'echo {}; wc -l {}'", "read"), ("git ls-files | xargs rm", "action"),
     ("psql ledgerly -c 'select count(*) from invoices'", "read"), ("crontab -l", "read"),
+    ("pip show hypothesis pytest-cov 2>&1 | head", "read"), ("python -m pytest --version", "read"), ("pip list", "read"),
+    ("python -m coverage --version", "read"), ("pip install hypothesis", "action"),
 ])
 def test_sandbox_classifies_commands(all_sessions, command, kind):
     assert Sandbox(all_sessions["ledgerly-rounding"]).run(cmd(command)).kind == kind

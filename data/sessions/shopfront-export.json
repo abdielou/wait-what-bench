@@ -20,12 +20,12 @@
     {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- export"}}]},
     {"role": "tool", "content": " PASS  src/lib/export/ordersCsv.test.ts\n  ✓ header row\n  ✓ one row per order\n  ✓ total has two decimals\n\nTest Suites: 1 passed, 1 total\nTests:       3 passed, 3 total\nSnapshots:   0 total"},
     {"role": "assistant", "content": "The route works: GET /api/admin/orders/export?from=YYYY-MM-DD&to=YYYY-MM-DD returns orders.csv with the six columns, and the tests pass. Nothing on /admin/orders links to it yet."},
-    {"role": "user", "content": "I opened it in Excel and the dates look weird, some show as 3/4 and some as 4/3"},
+    {"role": "user", "content": "I opened it in Excel and the dates look weird, some show as 3/4 and some as 4/3. I saw the names with commas too, we'll get to that after"},
     {"role": "assistant", "content": "That's locale-dependent formatting from toLocaleDateString. I'll switch to ISO 8601 so every tool reads it the same way.", "tool_calls": [{"name": "edit_file", "args": {"path": "src/lib/export/ordersCsv.ts", "old": "o.createdAt.toLocaleDateString()", "new": "o.createdAt.toISOString().slice(0, 10)"}}]},
     {"role": "tool", "content": "Edited src/lib/export/ordersCsv.ts (1 replacement)"},
     {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- export"}}]},
     {"role": "tool", "content": " PASS  src/lib/export/ordersCsv.test.ts\n  ✓ header row\n  ✓ one row per order\n  ✓ total has two decimals\n\nTest Suites: 1 passed, 1 total\nTests:       3 passed, 3 total\nSnapshots:   0 total"},
-    {"role": "assistant", "content": "Fixed. Dates are now written as YYYY-MM-DD, which Excel and Sheets parse consistently. Tests still pass. Fields aren't quoted yet, so a name with a comma would still split a row."}
+    {"role": "assistant", "content": "Fixed. Dates are now written as YYYY-MM-DD, which Excel and Sheets parse consistently. Tests still pass."}
   ],
   "continuations": [
     {"id": "exp-c1", "text": "add a refund_status column to the export"},
@@ -40,7 +40,7 @@
     {"id": "exp-s2", "text": "Different thing before we go on: add a .nvmrc pinning Node 22."}
   ],
   "question_endings": [
-    {"id": "exp-q1", "assistant": "Fixed. Dates are now written as YYYY-MM-DD, which Excel and Sheets parse consistently. Tests still pass. Fields aren't quoted yet, so a name with a comma would still split a row.\n\nWhile I'm here: should I (a) add a UTF-8 BOM so Excel shows accented customer names correctly, or (b) keep the file as plain UTF-8?", "answers": [{"id": "exp-a1", "text": "a please"}, {"id": "exp-a2", "text": "the second option"}]}
+    {"id": "exp-q1", "assistant": "Fixed. Dates are now written as YYYY-MM-DD, which Excel and Sheets parse consistently. Tests still pass.\n\nWhile I'm here: should I (a) add a UTF-8 BOM so Excel shows accented customer names correctly, or (b) keep the file as plain UTF-8?", "answers": [{"id": "exp-a1", "text": "a please"}, {"id": "exp-a2", "text": "the second option"}]}
   ],
   "pastes": [
     {"id": "exp-p1", "text": "tried exporting February locally and got a 500:\n\n```\n ⨯ TypeError: Cannot read properties of null (reading 'name')\n    at src/lib/export/ordersCsv.ts:6:90\n    at Array.map (<anonymous>)\n    at ordersToCsv (src/lib/export/ordersCsv.ts:6:23)\n    at GET (src/app/api/admin/orders/export/route.ts:9:23)\n GET /api/admin/orders/export?from=2026-02-01&to=2026-02-28 500 in 412ms\n```"},
