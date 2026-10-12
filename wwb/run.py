@@ -11,7 +11,8 @@ Examples:
   python -m wwb.run --out results/first.jsonl               # full run: all variants, thinking off,on
   python -m wwb.run --provider openrouter --models openai/gpt-5 --thinking off,on --out results/or.jsonl
 
-Models run on the Claude API by default (ANTHROPIC_API_KEY or an `ant auth login` profile);
+Models run on the Claude API by default (WWB_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY, or an
+`ant auth login` profile);
 the judge runs on OpenRouter (OPENROUTER_API_KEY). Cells a model can't run, like thinking
 off on Claude Opus 5.5, are skipped and listed at the start.
 

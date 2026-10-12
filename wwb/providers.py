@@ -119,6 +119,9 @@ class OpenRouterProvider:
                         reasoning_details=msg.get("reasoning_details"), usage=payload.get("usage", {}))
 
 
+# Read before ANTHROPIC_API_KEY: Claude Code cloud environments don't pass ANTHROPIC_API_KEY
+# through to the session (Claude Code uses that name itself).
+ANTHROPIC_KEY_ENV = "WWB_ANTHROPIC_API_KEY"
 # Latest Claude models, one per tier (Claude Mythos 5.1 is Project Glasswing only).
 LATEST_ANTHROPIC_MODELS = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 # Thinking can't be turned off on these: any thinking config but adaptive is a 400.
@@ -131,7 +134,8 @@ class AnthropicProvider:
     """Models under test, via the Claude API (official SDK).
 
     Messages arrive in the OpenAI format the rest of the pipeline uses and are converted here.
-    Credentials come from the SDK's usual chain: ANTHROPIC_API_KEY, or an `ant auth login` profile.
+    Credentials: WWB_ANTHROPIC_API_KEY if set, else the SDK's usual chain (ANTHROPIC_API_KEY, or an
+    `ant auth login` profile).
     No refusal fallbacks: a benchmark row must come from the model it names, so a classifier
     decline is recorded (stop_reason "refusal") instead of being answered by another model.
     """
@@ -142,7 +146,7 @@ class AnthropicProvider:
                 import anthropic
             except ImportError as e:
                 raise RuntimeError("the Claude API provider needs the SDK: pip install -e '.[anthropic]'") from e
-            client = anthropic.Anthropic(max_retries=5)
+            client = anthropic.Anthropic(api_key=os.environ.get(ANTHROPIC_KEY_ENV) or None, max_retries=5)
         self.client = client
         self.max_tokens = max_tokens
         self.effort = effort  # None = each model's default
@@ -165,7 +169,8 @@ class AnthropicProvider:
             except anthropic.APIConnectionError as e:
                 return [f"can't reach the Claude API: {e}"]
             except TypeError as e:  # the SDK found no credentials at all
-                return [f"no Claude API credentials: set ANTHROPIC_API_KEY or run `ant auth login` ({e})"[:300]]
+                return [f"no Claude API credentials: set {ANTHROPIC_KEY_ENV} (or ANTHROPIC_API_KEY), "
+                        f"or run `ant auth login` ({e})"[:300]]
         return problems
 
     def thinking_config(self, model: str, thinking: str | None) -> dict | None:

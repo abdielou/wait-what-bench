@@ -310,6 +310,14 @@ def anthropic_provider(replies=(), **kw):
     return AnthropicProvider(client=FakeClient(replies), **kw)
 
 
+def test_claude_key_from_project_variable(monkeypatch):
+    pytest.importorskip("anthropic")
+    from wwb.providers import AnthropicProvider
+    monkeypatch.setenv("WWB_ANTHROPIC_API_KEY", "sk-test-wwb")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert AnthropicProvider().client.api_key == "sk-test-wwb"
+
+
 def test_claude_thinking_settings_per_model():
     p = anthropic_provider()
     assert p.thinking_config("claude-opus-5-5", "off") is None      # always thinks: skip the cell

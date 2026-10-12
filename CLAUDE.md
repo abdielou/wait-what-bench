@@ -36,19 +36,19 @@ Mitigation he's been given in the meantime: a "wrong-thread check" instruction i
 ## Current state
 
 - Scaffold complete and tested with the mock provider (`python -m pytest`, `python -m wwb.run --provider mock`).
-- **Not yet run against real models.** Needs `ANTHROPIC_API_KEY` (models) and `OPENROUTER_API_KEY` (Jev judge).
+- **Not yet run against real models.** Needs `ANTHROPIC_API_KEY` (models; in Claude Code cloud environments, name it `WWB_ANTHROPIC_API_KEY`, since `ANTHROPIC_API_KEY` isn't passed through there) and `OPENROUTER_API_KEY` (Jev judge).
+- **Jev judge verified live (2026-10-12):** the Decisions API request and response match `OpenRouterProvider.decide` / `jev_label`; 4 of 4 sample responses labeled as expected (FLAGGED, PROCEEDED, CLARIFY_GENERIC, and a timing catch).
 - Seed dataset is small and synthetic: 5 sessions (3 agentic coding, 2 chat), 134 cases (88 swaps plus 46 in the newer families) plus 14 time cases. Enough to validate the pipeline, NOT enough for conclusions.
 
 ## Next steps (suggested order)
 
 1. Smoke-test the Claude API provider (`--limit 5`): no 400s on the thinking settings, and time-family clock rounds succeed with thinking on (the assistant's blocks are replayed verbatim). For OpenRouter models, verify the `reasoning` parameter per model (`wwb/providers.py`, marked TODO).
-2. Verify the Jev judge against the live Decisions API (`OpenRouterProvider.decide`, `jev_label`). The request and response shapes were written from public docs and not yet tested live.
-3. First real run on 3 to 5 models, all variants, thinking on/off. Spot-check ~30 judge labels by hand before trusting numbers.
-4. Grow the dataset. Best source: **real transcripts** from Abdiel's own Claude Code sessions (`~/.claude/projects/**/*.jsonl`). Write a converter that turns them into `data/sessions/*.json` and lets the swap generator do the rest. Strip secrets first.
-5. Add subtler non-sequiturs (messages that are plausible in both sessions) and history-length sweeps (does the model catch it less after 50 turns?).
-6. Consider a multi-step variant: let the model take N tool steps and record whether it ever notices.
-7. Extend the time family: chat scenarios (with a clock tool) and a turn-by-turn replay for cases with no starting time in the history, like bread.
-8. Publish (README + results table). The name "wait-what-bench" is his.
+2. First real run on 3 to 5 models, all variants, thinking on/off. Spot-check ~30 judge labels by hand before trusting numbers.
+3. Grow the dataset. Best source: **real transcripts** from Abdiel's own Claude Code sessions (`~/.claude/projects/**/*.jsonl`). Write a converter that turns them into `data/sessions/*.json` and lets the swap generator do the rest. Strip secrets first.
+4. Add subtler non-sequiturs (messages that are plausible in both sessions) and history-length sweeps (does the model catch it less after 50 turns?).
+5. Consider a multi-step variant: let the model take N tool steps and record whether it ever notices.
+6. Extend the time family: chat scenarios (with a clock tool) and a turn-by-turn replay for cases with no starting time in the history, like bread.
+7. Publish (README + results table). The name "wait-what-bench" is his.
 
 ## How Abdiel likes to work
 
