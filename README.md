@@ -2,6 +2,15 @@
 
 **Does an LLM notice a non-sequitur?**
 
+| Model | Score |
+|---|---|
+| Fable 5.1 | 56% |
+| Opus 5.5 | 47% |
+| Sonnet 5.5 | 43% |
+| Haiku 5.5 | 43% |
+
+How often each model stops and asks when a message meant for another session in the same repository lands in its session, instead of acting on it. Weighted score on the hard tier (99 misdirected messages, 82 normal ones), neutral prompt, thinking on: higher is better, and no model wrongly stopped a normal message here, so it equals the catch rate. Full results and how to read them: [Results](#results). New to this? Read the [visual guide](https://htmlpreview.github.io/?https://github.com/abdielou/wait-what-bench/blob/main/docs/guide.html) ([source](docs/guide.html)).
+
 When a message doesn't follow from the conversation at all, a human would say *"wait, what?"* Most models just start working on it. The everyday trigger: you run several AI coding sessions in parallel and type into the wrong one, and the model starts editing the wrong branch of the wrong project.
 
 This benchmark measures whether the model notices. Each case is a scripted session (a coding agent mid-task, or a normal chat) followed by one probe message. The probe is either:
@@ -110,6 +119,7 @@ wwb/rejudge.py         labels an existing results file again with another judge
 wwb/run.py             runner (concurrent, resumable)
 wwb/report.py          markdown/CSV summary
 wwb/chart.py           the results chart (docs/results-hard.svg)
+wwb/guide.py           the visual guide for newcomers (docs/guide.html, from wwb/guide_template.html)
 docs/DESIGN.md         design rationale and open questions
 tools/find_misfires.py finds real misdirected messages in your own Claude Code transcripts
 wwb/replay.py          replays a real transcript on a model, up to the misdirected message
