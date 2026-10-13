@@ -71,3 +71,15 @@ def test_load_cases_from_find_misfires_output(tmp_path):
     (tmp_path / "index.json").write_text(json.dumps([{"n": 1, "misdirected": "STOP", "matched": "wrong session"}]))
     (name, got, probe), = replay.load_cases(tmp_path)
     assert name == "01-shop-s1" and probe == misdirected
+
+
+def test_load_cases_skips_a_message_typed_mid_turn(tmp_path, capsys):
+    rows = transcript()[:5]  # ends with the assistant running a tool
+    rows += [row("attachment", None, attachment={"type": "queued_command", "commandMode": "prompt",
+                                                 "prompt": "make the tax rate 8% for NY", "origin": {"kind": "human"}}),
+             row("user", None, [{"type": "tool_result", "tool_use_id": "t1", "content": "orders.ts"}]),
+             row("user", None, "wrong session, sorry")]
+    (tmp_path / "01-shop-s1.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    (tmp_path / "index.json").write_text(json.dumps([{"n": 1, "misdirected": "make the tax rate 8% for NY",
+                                                      "matched": "wrong session"}]))
+    assert replay.load_cases(tmp_path) == [] and "typed while the assistant was working" in capsys.readouterr().err

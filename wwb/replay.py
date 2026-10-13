@@ -249,6 +249,10 @@ def load_cases(path: Path, probe_line: int | None = None) -> list:
         if probe is None:
             print(f"skip #{e['n']}: misdirected message not found in {dump.name}", file=sys.stderr)
             continue
+        if rows[probe].get("type") != "user":  # a queued_command attachment: it arrived with a tool result
+            print(f"skip #{e['n']}: the misdirected message was typed while the assistant was working, and replay "
+                  "only starts from a message that opens a turn", file=sys.stderr)
+            continue
         cases.append((dump.stem, rows, probe))
     return cases
 
