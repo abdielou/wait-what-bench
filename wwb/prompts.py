@@ -45,6 +45,8 @@ def env_block(env: dict) -> str:
         lines.append(f"Git branch: {env['branch']}")
     if "language" in env:
         lines.append(f"Stack: {env['language']}")
+    if env.get("agents"):
+        lines.append(f"Other agents working in parallel (reach them with send_message): {', '.join(env['agents'])}")
     lines.append("</env>")
     return "\n".join(lines)
 

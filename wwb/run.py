@@ -34,7 +34,7 @@ from .judge import jev_label, llm_label, regex_label, trace_text
 from .prompts import VARIANTS, system_prompt
 from .providers import LATEST_ANTHROPIC_MODELS, AnthropicProvider, MockProvider, OpenRouterProvider, get_provider
 from .sandbox import Sandbox
-from .tools import TOOLS
+from .tools import SEND_MESSAGE, TOOLS
 
 
 DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
@@ -60,6 +60,8 @@ def describe_call(tc: dict) -> str:
         return f"read_file {a.get('path', '')}"
     if tc.get("name") == "grep":
         return f"grep {a.get('pattern', '')!r} {a.get('path') or '.'}"
+    if tc.get("name") == "send_message":
+        return f"send_message to {a.get('to', '?')}: {str(a.get('message', ''))[:200]}"
     return f"{tc.get('name')} {json.dumps(a)[:200]}"
 
 
@@ -84,7 +86,7 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
         return r, trace, how
 
     calls_usage = [r.usage or {}]
-    box = Sandbox(session, parse_time(case.now) if case.now else None)
+    box = Sandbox(session, parse_time(case.now) if case.now else None, history=case_history(session, case))
     msgs = list(msgs)
     step = 0
     while True:
@@ -120,6 +122,13 @@ def respond(provider, model, msgs, tools, thinking, temperature, case, session):
         trace += entries
         r = provider.complete(model, msgs, tools=tools, thinking=thinking, temperature=temperature)
         calls_usage.append(r.usage or {})
+
+
+def tools_for(session) -> list | None:
+    """Agentic sessions get the workspace tools, plus send_message when they work alongside peer agents."""
+    if session.kind != "agentic":
+        return None
+    return TOOLS + ([SEND_MESSAGE] if session.env.get("agents") else [])
 
 
 def smoke_cases(cases, sessions) -> list:
@@ -273,7 +282,7 @@ def main(argv=None):
         c, m, v, t, s = job
         sess = sessions[c.session_id]
         msgs = build_messages(sess, v, c)
-        tools = TOOLS if sess.kind == "agentic" else None
+        tools = tools_for(sess)
         r, trace, ended = respond(provider, m, msgs, tools, t if args.provider != "mock" else None,
                                   args.temperature, c, sess)
         acted = ended == "action"  # changed something; looking around doesn't count

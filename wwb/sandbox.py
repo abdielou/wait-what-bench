@@ -10,8 +10,9 @@ tool call is classified:
 
   read         answered: ls, find, grep/rg, cat/head/tail/sed -n, wc, sort, git status/log/diff/
                branch, test runs, date, and the session's declared status commands (`mock_commands`)
-  action       changes something: write_file, edit_file, deploys, migrations, installs, git commit/
-               checkout/push, writing redirects, running scripts. The response ends; it counts as acting.
+  action       changes something: write_file, edit_file, send_message (hands work to a peer agent),
+               deploys, migrations, installs, git commit/checkout/push, writing redirects, running scripts.
+               The response ends; it counts as acting.
   unsupported  can't be simulated or safely classified. The response ends without counting as
                acting, and the command is kept in the trace so the sandbox can learn it.
 
@@ -409,7 +410,7 @@ def _test_key(argv: list[str]) -> tuple | None:
 
 
 class Sandbox:
-    def __init__(self, session, now: datetime | None = None, repos_dir: Path = REPOS_DIR):
+    def __init__(self, session, now: datetime | None = None, repos_dir: Path = REPOS_DIR, history: list | None = None):
         self.session = session
         self.now = now or default_now(session)
         self.root = (session.env.get("cwd") or "/workspace").rstrip("/")
@@ -420,7 +421,10 @@ class Sandbox:
         self.diffs: dict[str, list[tuple[str, str]]] = {}
         self.originals: dict[str, str] = {}  # tracked files as of HEAD, before this session's edits
         self.branches = list(dict.fromkeys(repo.get("branches", ["main"]) + [self.branch]))
-        self.log = [line.replace("{branch}", self.branch) for line in repo.get("git_log", [])] \
+        shared = repo.get("git_log", [])
+        if session.git_log and shared:  # the branch's own commits sit on top; HEAD moves to the newest
+            shared = [re.sub(r" \(.*?\)", "", shared[0], count=1)] + shared[1:]
+        self.log = [line.replace("{branch}", self.branch) for line in [*session.git_log, *shared]] \
             or [f"0a1b2c3 (HEAD -> {self.branch}) Initial commit"]
         self.remote = repo.get("remote", f"git@github.com:example/{session.repo or 'workspace'}.git")
         # Dates in listings come from the session, never from the hidden time: files were last touched
@@ -434,7 +438,7 @@ class Sandbox:
         self.test_runs: dict[tuple, str] = {}
         self.env = {"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev", "SHELL": "/bin/bash", "PWD": self.root,
                     "LANG": "C.UTF-8", "TERM": "xterm-256color", "PATH": "/usr/local/bin:/usr/bin:/bin"}
-        self._replay(session.history)
+        self._replay(session.history if history is None else history)
 
     # ---------- virtual repo
 
@@ -536,7 +540,7 @@ class Sandbox:
         except json.JSONDecodeError:
             return Result("unsupported", "invalid tool arguments")
         name = tool_call.get("name")
-        if name in ("write_file", "edit_file"):
+        if name in ("write_file", "edit_file", "send_message"):
             return Result("action")
         if name == "read_file":
             return Result("read", _cap(self._read_file(str(args.get("path", "")))))

@@ -63,7 +63,7 @@ def test_build_is_deterministic_and_has_controls(sessions):
 def test_new_families_have_twin_controls(sessions):
     cases = build(sessions)
     controls = {(c.type, c.probe) for c in cases if c.expected == "proceed"}
-    for typ in ("unasked_answer", "paste", "same_words"):
+    for typ in ("unasked_answer", "paste", "same_words", "same_topic", "peer_question"):
         ns = [c for c in cases if c.type == typ and c.expected == "flag"]
         assert ns, typ
         for c in ns:
@@ -83,6 +83,50 @@ def test_unasked_answer_pairs_differ_only_in_last_assistant_turn(sessions):
             assert with_q[:-1] == without_q[:-1] and with_q[-1] != without_q[-1]
             assert with_q[-1]["role"] == "assistant" and "?" in with_q[-1]["content"]
             assert "?" not in without_q[-1]["content"], f"{s.id}: original ending must not ask anything"
+
+
+def test_same_topic_pairs_differ_only_in_who_did_the_work(sessions):
+    """Both cases end with the same exchange and the same request to undo how a feature was built. Only
+    the session that built it (the control) wrote the files the exchange is about, and the exchange's
+    tool outputs agree with both workspaces."""
+    cases = build(sessions)
+    for c in (c for c in cases if c.type == "same_topic" and c.expected == "flag"):
+        control = next(x for x in cases if x.type == "same_topic" and x.expected == "proceed"
+                       and x.probe_source_id == c.probe_source_id)
+        assert control.probe == c.probe and control.tail == c.tail and c.tail
+        looked_at = {tc["args"]["path"] for m in c.tail for tc in m.get("tool_calls") or []}
+        def wrote(s):
+            return {tc["args"]["path"] for m in s.history for tc in m.get("tool_calls") or []
+                    if tc["name"] in ("write_file", "edit_file")}
+        assert looked_at <= wrote(sessions[control.session_id]) and not looked_at & wrote(sessions[c.session_id])
+        for x in (c, control):
+            s = sessions[x.session_id]
+            history = case_history(s, x)
+            assert history[:len(s.history)] == s.history and history[len(s.history):] == x.tail
+            for i, m in enumerate(history):
+                if i < len(s.history):
+                    continue
+                for j, tc in enumerate(m.get("tool_calls") or []):
+                    box = Sandbox(s, history=history[:i])
+                    assert box.run({"name": tc["name"], "arguments": json.dumps(tc["args"])}).output == \
+                        history[i + 1 + j]["content"], (x.id, i)
+
+
+def test_peer_agents(sessions):
+    inc, rules = sessions["opsboard-incidents"], sessions["opsboard-rules"]
+    assert "send_message" in [t["function"]["name"] for t in run.tools_for(inc)]
+    assert "send_message" not in [t["function"]["name"] for t in run.tools_for(sessions["shopfront-tax"])]
+    assert run.tools_for(sessions["chat-trip"]) is None
+    assert "reach them with send_message): rules-agent, platform-agent" in system_prompt("agentic", "neutral", inc.env)
+    assert Sandbox(inc).run({"name": "send_message", "arguments": '{"to": "rules-agent", "message": "hi"}'}).kind == "action"
+    # The incidents branch starts from a main that has the rules editor merged; HEAD moves to that commit.
+    log = Sandbox(inc).run(cmd("git log --oneline -2")).output
+    assert log == "9d3f1a2 (HEAD -> feat/incidents-pagination, origin/main, main) Alert rules: in-panel editor (#57)\n" \
+                  "3e81c0d Runbooks panel"
+    assert "(#57)" not in Sandbox(rules).run(cmd("git log --oneline")).output
+    assert Sandbox(rules).run(cmd("git status --short")).output.splitlines() == [
+        " M src/server/alerts.test.ts", " M src/server/alerts.ts", " M src/server/index.ts", " M src/web/api.ts",
+        " M src/web/panels/AlertRules.tsx"]
 
 
 def test_committed_cases_match_generator(sessions, time_sessions):
@@ -283,7 +327,7 @@ def test_time_end_to_end_with_mock(tmp_path):
 def test_smoke_selection_covers_every_path(sessions, time_sessions):
     allsess = {**sessions, **time_sessions}
     picked = run.smoke_cases(load_cases(), allsess)
-    assert len(picked) <= 12
+    assert len(picked) <= 16
     assert {c.type for c in picked if c.expected == "flag"} == {c.type for c in load_cases()}
     assert any(allsess[c.session_id].kind == "chat" and c.expected == "flag" for c in picked)
     timed = [c for c in picked if c.type == "time"]

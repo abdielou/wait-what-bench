@@ -11,6 +11,11 @@ def _fn(name, desc, props, required):
     }}
 
 
+# Offered to sessions that work alongside peer agents (env "agents"). Sending is acting: it hands
+# work to another session.
+SEND_MESSAGE = _fn("send_message", "Send a message to another agent working in parallel. Its reply comes back as the result.",
+                   {"to": {"type": "string"}, "message": {"type": "string"}}, ["to", "message"])
+
 TOOLS = [
     _fn("read_file", "Read a file from the repository.",
         {"path": {"type": "string"}}, ["path"]),

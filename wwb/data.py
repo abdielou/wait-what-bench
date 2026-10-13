@@ -35,6 +35,11 @@ class Session:
     question_endings: list[dict] = field(default_factory=list)  # alt last assistant turn + answers to it
     pastes: list[dict] = field(default_factory=list)  # pasted output (errors, logs, data), no instruction
     lures: list[dict] = field(default_factory=list)  # continuations reusing other sessions' vocabulary
+    # Patterns from real misfires: a message that continues the topic just discussed but refers to work
+    # this session didn't do (`tail`: the shared closing exchange both sessions get first), and a question
+    # about what a peer agent told this session, sent to a session the peer never told.
+    topic_probes: list[dict] = field(default_factory=list)
+    peer_questions: list[dict] = field(default_factory=list)
     # Time family (see clock.py): when the history ends, probes with hidden send times, and
     # read-only status commands the harness answers according to that time.
     clock: dict = field(default_factory=dict)
@@ -42,6 +47,7 @@ class Session:
     mock_commands: list[dict] = field(default_factory=list)
     # Sandbox (sandbox.py): files this session's branch adds to data/repos/<repo>.json.
     repo_files: dict = field(default_factory=dict)
+    git_log: list = field(default_factory=list)  # commits this branch adds on top of the repo's log, newest first
 
 
 @dataclass
@@ -54,8 +60,10 @@ class Case:
     difficulty: str  # "easy" | "medium" | "hard" | "same_session" | "control"
     donor_session_id: str | None = None
     probe_source_id: str | None = None
-    type: str = "swap"  # probe family: "swap" | "unasked_answer" | "paste" | "same_words" | "time"
+    # probe family: "swap" | "unasked_answer" | "paste" | "same_words" | "same_topic" | "peer_question" | "time"
+    type: str = "swap"
     ending_id: str | None = None  # replace the last assistant turn with this question ending
+    tail: list = field(default_factory=list)  # turns appended to the history before the probe (same_topic)
     now: str | None = None  # time family: hidden time the probe was sent (what `date` returns)
     meta: dict = field(default_factory=dict)
 
@@ -72,6 +80,8 @@ def load_session(path: Path) -> Session:
         question_endings=d.get("question_endings", []), pastes=d.get("pastes", []),
         lures=d.get("lures", []), clock=d.get("clock", {}), time_probes=d.get("time_probes", []),
         mock_commands=d.get("mock_commands", []), repo_files=d.get("repo_files", {}),
+        topic_probes=d.get("topic_probes", []), peer_questions=d.get("peer_questions", []),
+        git_log=d.get("git_log", []),
     )
 
 
@@ -104,11 +114,12 @@ def load_cases(path: Path = CASES_PATH) -> list[Case]:
 
 
 def case_history(session: Session, case: Case) -> list[dict]:
-    """The session history the probe is sent into, with the case's question ending applied."""
-    if not case.ending_id:
-        return session.history
-    ending = next(e for e in session.question_endings if e["id"] == case.ending_id)
-    return session.history[:-1] + [{"role": "assistant", "content": ending["assistant"]}]
+    """The session history the probe is sent into: the case's question ending applied, its tail appended."""
+    history = session.history
+    if case.ending_id:
+        ending = next(e for e in session.question_endings if e["id"] == case.ending_id)
+        history = history[:-1] + [{"role": "assistant", "content": ending["assistant"]}]
+    return history + list(case.tail) if case.tail else history
 
 
 def to_openai_messages(history: list[dict], session_id: str = "s") -> list[dict]:

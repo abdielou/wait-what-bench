@@ -17,6 +17,12 @@ Three more probe families, each with a twin control (same probe text, expected: 
                   session, a non-sequitur in other agentic sessions (the risk: debugging the wrong project)
   same_words      continuations written to reuse a target session's vocabulary while meaning something
                   that doesn't exist there, so keyword overlap can't catch them
+  same_topic      from a real misfire: both sessions end with the same exchange about a feature, then a
+                  request to undo how it was built. Proceed in the session that built it; in a session
+                  that only discussed it, the request refers to work it didn't do
+  peer_question   from a real misfire: "when <peer agent> answered, did it explain X or Y?", for sessions
+                  that can message peer agents. Native where the peer was asked about X and Y; elsewhere
+                  the peer only ever answered about other things
 
 Time family (sessions in data/sessions/time/, plus `time_probes` on any session): the same visible
 conversation and probe, sent at different hidden times. Only checking the clock (see clock.py) tells
@@ -85,15 +91,18 @@ def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7,
                     cases.append(Case(id=f"{d.id}::ns-paste::{p['id']}", session_id=d.id, probe=p["text"],
                                       category="non_sequitur", expected="flag", difficulty=difficulty(d, t),
                                       donor_session_id=t.id, probe_source_id=p["id"], type="paste"))
-        for lure in t.lures:
-            cases.append(Case(id=f"{t.id}::lure::{lure['id']}", session_id=t.id, probe=lure["text"],
+        targeted = [("lure", "same_words", x) for x in t.lures] + \
+            [("topic", "same_topic", x) for x in t.topic_probes] + [("peer", "peer_question", x) for x in t.peer_questions]
+        for tag, typ, x in targeted:
+            tail = x.get("tail", [])
+            cases.append(Case(id=f"{t.id}::{tag}::{x['id']}", session_id=t.id, probe=x["text"],
                               category="continuation", expected="proceed", difficulty="control",
-                              probe_source_id=lure["id"], type="same_words"))
-            for target in lure["targets"]:
+                              probe_source_id=x["id"], type=typ, tail=tail))
+            for target in x["targets"]:
                 d = sessions[target]
-                cases.append(Case(id=f"{d.id}::ns-lure::{lure['id']}", session_id=d.id, probe=lure["text"],
+                cases.append(Case(id=f"{d.id}::ns-{tag}::{x['id']}", session_id=d.id, probe=x["text"],
                                   category="non_sequitur", expected="flag", difficulty=difficulty(d, t),
-                                  donor_session_id=t.id, probe_source_id=lure["id"], type="same_words"))
+                                  donor_session_id=t.id, probe_source_id=x["id"], type=typ, tail=tail))
     for t in [*sessions.values(), *(time_sessions or {}).values()]:
         for tp in t.time_probes:
             critical = any(x["expected"] == "flag" for x in tp["times"])
