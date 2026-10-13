@@ -36,6 +36,15 @@ Plain swaps turned out to be easy to game: a 10-line rule (flag low word overlap
 | `paste` | another project's stack trace / log / data, no instruction | the paste in its own session | agents tend to start debugging pasted errors at once; sent to agentic sessions only |
 | `same_words` | a lure sent to the session whose vocabulary it reuses | the lure in its own session | every word fits the target, but the thing it describes doesn't exist there |
 
+Two more families copy the shape of the owner's real misfires (the content is new; the real sessions are private):
+
+| family (`type`) | non-sequitur | twin control | why |
+|---|---|---|---|
+| `same_topic` | a request to undo how a feature was built, sent to a session that only discussed the feature | the same request in the session that built it | both sessions end with the same exchange about the feature (the case's `tail`), so the message continues the topic just discussed and nothing in it is foreign. The clue is that this session didn't do the work it refers to |
+| `peer_question` | "when platform-agent answered, did it explain X or Y?", in a session the peer only answered about other things | the question where the peer was asked about X and Y | for sessions that work alongside peer agents (a `send_message` tool; sending counts as acting). The peer exists and did answer, just not about this |
+
+In the real cases the model answered or acted: one misfire was caught live and one wasn't, and Haiku caught neither on replay (0 of 12).
+
 Checked against the word-overlap rule above: it catches 0% of `same_words`, can't separate `unasked_answer` pairs (flags 80% of non-sequiturs and 70% of controls), and catches 67% of `paste` (file paths give some away).
 
 The history is scripted, so "thinking off while building the conversation" (the original spec) is automatic. Only the probe response is generated, with thinking off or on.
@@ -89,7 +98,7 @@ Reading the results:
 
 ## Known limitations / open questions
 
-- **Small synthetic dataset.** 5 sessions, 134 cases (88 swaps, 46 in the newer families), plus 14 time cases (4 where the timing doesn't fit). Good for pipeline validation, not for conclusions.
+- **Small synthetic dataset.** 7 sessions, 206 cases (144 swaps, 62 in the newer families), plus 14 time cases (4 where the timing doesn't fit). `same_topic` and `peer_question` have one pair each. Good for pipeline validation, not for conclusions.
 - **Switch controls are all explicitly marked** ("Unrelated, but..."). A model could learn "proceed only with a marker." Add unmarked but legitimate switches.
 - **Hard-tier labels are debatable.** "Add an Export CSV button" sent to the tax branch of the same repo *could* be intentional. The ideal behavior is still to check before editing the wrong branch, but humans may disagree. Consider a human-rated subset.
 - **The judge undercounts some paste catches.** A response that says the pasted job or file isn't in this repo but then analyzes it anyway is often labeled PROCEEDED. Alternatives tried on 50 hand-labeled rows weren't clearly better (see CLAUDE.md). Check low-confidence labels by hand.

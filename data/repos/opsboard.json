@@ -11,6 +11,46 @@
   "a19f3b7 Initial opsboard: API and web app"
  ],
  "remote": "git@github.com:example-ops/opsboard.git",
+ "commit_files": {
+  "a19f3b7": [
+   "README.md",
+   "package.json",
+   "tsconfig.json",
+   "jest.config.js",
+   "vite.config.ts",
+   "index.html",
+   ".gitignore",
+   "src/server/db.ts",
+   "src/server/index.ts",
+   "src/web/main.tsx",
+   "src/web/App.tsx",
+   "src/web/api.ts"
+  ],
+  "5c0d6e1": [
+   "src/server/incidents.ts",
+   "src/server/index.ts",
+   "src/web/api.ts",
+   "src/web/App.tsx",
+   "src/web/panels/Incidents.tsx"
+  ],
+  "b72a9f4": [
+   "config/alerts.yaml",
+   "src/server/alerts.ts",
+   "src/server/alerts.test.ts",
+   "src/server/index.ts",
+   "src/web/api.ts",
+   "src/web/App.tsx",
+   "src/web/panels/AlertRules.tsx"
+  ],
+  "3e81c0d": [
+   "runbooks/api-errors.md",
+   "runbooks/queue-backlog.md",
+   "runbooks/disk-free.md",
+   "src/web/openInEditor.ts",
+   "src/web/panels/Runbooks.tsx",
+   "src/web/App.tsx"
+  ]
+ },
  "files": {
   "README.md": "# opsboard\n\nInternal ops dashboard: incidents, alert rules and runbooks.\n\n- `npm run dev` - API on :4000 and the web app on :5173\n- `npm test` - Jest\n- `npm run typecheck` - tsc\n\nAlert rules live in `config/alerts.yaml`.\n",
   "package.json": "{\n  \"name\": \"opsboard\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"concurrently \\\"tsx watch src/server/index.ts\\\" \\\"vite\\\"\",\n    \"build\": \"vite build\",\n    \"test\": \"jest\",\n    \"typecheck\": \"tsc --noEmit\"\n  },\n  \"dependencies\": {\n    \"express\": \"^4.21.2\",\n    \"pg\": \"^8.13.1\",\n    \"react\": \"^18.3.1\",\n    \"react-dom\": \"^18.3.1\",\n    \"yaml\": \"^2.6.1\"\n  },\n  \"devDependencies\": {\n    \"@types/express\": \"^5.0.0\",\n    \"@types/jest\": \"^29.5.14\",\n    \"@types/pg\": \"^8.11.10\",\n    \"@types/react\": \"^18.3.12\",\n    \"@types/react-dom\": \"^18.3.1\",\n    \"@vitejs/plugin-react\": \"^4.3.4\",\n    \"concurrently\": \"^9.1.0\",\n    \"jest\": \"^29.7.0\",\n    \"ts-jest\": \"^29.2.5\",\n    \"tsx\": \"^4.19.2\",\n    \"typescript\": \"^5.7.2\",\n    \"vite\": \"^6.0.3\"\n  }\n}\n",
@@ -24,7 +64,7 @@
   "runbooks/queue-backlog.md": "# Job queue backlog\n\n1. Check that the workers are running.\n2. Scale the workers up if the backlog keeps growing.\n",
   "runbooks/disk-free.md": "# Disk free on db hosts\n\n1. Find the largest tables.\n2. Vacuum, or ask infra for more disk.\n",
   "src/server/db.ts": "import { Pool } from 'pg';\n\nexport const primary = new Pool({ connectionString: process.env.OPS_DB_URL });\nexport const replica = new Pool({ connectionString: process.env.OPS_DB_REPLICA_URL ?? process.env.OPS_DB_URL });\n",
-  "src/server/incidents.ts": "import { primary } from './db';\n\nexport type Incident = {\n  id: number;\n  ruleId: string;\n  title: string;\n  status: 'open' | 'acknowledged' | 'resolved';\n  openedAt: string;\n};\n\nexport async function listIncidents(): Promise<Incident[]> {\n  const { rows } = await primary.query(\n    `SELECT id, rule_id AS \"ruleId\", title, status, opened_at AS \"openedAt\"\n       FROM incidents\n      ORDER BY opened_at DESC`,\n  );\n  return rows;\n}\n",
+  "src/server/incidents.ts": "import { primary } from './db';\n\nexport type Incident = {\n  id: number;\n  ruleId: string;\n  title: string;\n  status: 'open' | 'acknowledged' | 'resolved';\n  openedAt: string;\n};\n\nexport async function listIncidents(): Promise<Incident[]> {\n  const { rows } = await primary.query(\n    `SELECT id, rule_id AS \"ruleId\", title, status,\n            to_char(opened_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS \"openedAt\"\n       FROM incidents\n      ORDER BY opened_at DESC`,\n  );\n  return rows;\n}\n",
   "src/server/alerts.ts": "import { readFile } from 'node:fs/promises';\nimport YAML from 'yaml';\n\nexport type Rule = {\n  id: string;\n  name: string;\n  metric: string;\n  op: '>' | '<';\n  threshold: number;\n  for: string;\n  severity: 'info' | 'warning' | 'critical';\n};\n\nexport const RULES_PATH = 'config/alerts.yaml';\n\nexport async function loadRules(path = RULES_PATH): Promise<Rule[]> {\n  const doc = YAML.parse(await readFile(path, 'utf8'));\n  return doc.rules ?? [];\n}\n",
   "src/server/alerts.test.ts": "import { mkdtemp, writeFile } from 'node:fs/promises';\nimport { tmpdir } from 'node:os';\nimport { join } from 'node:path';\nimport { loadRules } from './alerts';\n\ntest('loads rules from YAML', async () => {\n  const path = join(await mkdtemp(join(tmpdir(), 'rules-')), 'alerts.yaml');\n  await writeFile(path, 'rules:\\n  - id: a\\n    name: A\\n    metric: m\\n    op: \">\"\\n    threshold: 1\\n    for: 1m\\n    severity: info\\n');\n  expect((await loadRules(path))[0].id).toBe('a');\n});\n",
   "src/server/index.ts": "import express from 'express';\nimport { listIncidents } from './incidents';\nimport { loadRules } from './alerts';\n\nconst app = express();\napp.use(express.json());\n\napp.get('/api/incidents', async (_req, res) => {\n  res.json(await listIncidents());\n});\n\napp.get('/api/alerts', async (_req, res) => {\n  res.json(await loadRules());\n});\n\napp.listen(4000, () => console.log('opsboard api on :4000'));\n",

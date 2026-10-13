@@ -129,6 +129,28 @@ def test_peer_agents(sessions):
         " M src/web/panels/AlertRules.tsx"]
 
 
+def test_sandbox_git_history(sessions):
+    """Old versions, path-limited logs and per-commit stats follow the repo's commit_files: a model that
+    looks for "the old design" in history has to find it there."""
+    inc, rules = Sandbox(sessions["opsboard-incidents"]), Sandbox(sessions["opsboard-rules"])
+    out = lambda box, c: box.run(cmd(c)).output  # noqa: E731
+    panel = "src/web/panels/AlertRules.tsx"
+    assert out(inc, f"git log --oneline -- {panel}").splitlines() == [
+        "9d3f1a2 (HEAD -> feat/incidents-pagination, origin/main, main) Alert rules: in-panel editor (#57)",
+        "b72a9f4 Alert rules panel (read-only)"]
+    assert "saveRules" not in out(inc, f"git show b72a9f4:{panel}") and "saveRules" in out(inc, f"git show HEAD:{panel}")
+    assert "does not exist in 'b72a9f4'" in out(inc, "git show b72a9f4:src/web/openInEditor.ts")  # added later
+    assert "5 files changed, 116 insertions(+), 11 deletions(-)" in out(inc, "git show 9d3f1a2 --stat")
+    assert "A\tsrc/web/panels/AlertRules.tsx" in out(inc, "git show b72a9f4 --name-status")
+    assert out(inc, f"git diff b72a9f4 HEAD --name-only -- {panel}") == panel
+    assert out(inc, f"git diff -- {panel}") == "(no output)"  # the incidents session never touched it
+    assert "saveRules" not in out(rules, f"git show HEAD:{panel}")  # this session's form isn't committed
+    hunk = out(rules, "git diff src/server/index.ts")
+    assert "-import { loadRules } from './alerts';\n+import { loadRules, saveRules } from './alerts';" in hunk
+    assert out(rules, "file README.md src/web") == "README.md: ASCII text\nsrc/web: directory"
+    assert out(rules, "git check-ignore -v node_modules/x .DS_Store") == ".gitignore:1:node_modules/\tnode_modules/x"
+
+
 def test_committed_cases_match_generator(sessions, time_sessions):
     committed = [c.id for c in load_cases()]
     assert committed == [c.id for c in build(sessions, 2, 7, time_sessions)], "re-run: python -m wwb.build_cases"
@@ -488,6 +510,7 @@ def all_sessions(sessions, time_sessions):
     ("git grep -l total $(git for-each-ref --format='%(refname:short)' refs/heads)", "read"),
     ("for f in tests/invoices/*.py; do echo \"== $f\"; wc -l $f; done", "read"), ("for f in a b; do rm $f; done", "action"),
     ("git log --format='%h %an %s' -S 'def total'", "read"), ("git show HEAD~1 --stat", "read"),
+    ("file README.md", "read"), ("git check-ignore -v .env", "read"),
     ("sh -c 'ls tests'", "read"), ("bash -c 'rm -rf x'", "action"), ("ls -d */ | xargs -n1 basename", "read"),
     ("find . -name '*.py' | xargs -I{} sh -c 'echo {}; wc -l {}'", "read"), ("git ls-files | xargs rm", "action"),
     ("psql ledgerly -c 'select count(*) from invoices'", "read"), ("crontab -l", "read"),

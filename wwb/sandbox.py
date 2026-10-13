@@ -26,6 +26,7 @@ identical answers except from the clock and the time-dependent status commands.
 """
 from __future__ import annotations
 
+import difflib
 import fnmatch
 import hashlib
 import json
@@ -416,7 +417,9 @@ class Sandbox:
         self.root = (session.env.get("cwd") or "/workspace").rstrip("/")
         self.branch = session.env.get("branch") or "main"
         repo = load_repo(session.repo, repos_dir)
-        self.files: dict[str, str] = {_norm(p): c for p, c in {**repo.get("files", {}), **session.repo_files}.items()}
+        self.base_files = {_norm(p): c for p, c in repo.get("files", {}).items()}  # as of the shared commits
+        self.branch_files = {_norm(p) for p in session.repo_files}  # changed by this branch's own commits
+        self.files: dict[str, str] = {**self.base_files, **{_norm(p): c for p, c in session.repo_files.items()}}
         self.tracked = set(self.files)
         self.diffs: dict[str, list[tuple[str, str]]] = {}
         self.originals: dict[str, str] = {}  # tracked files as of HEAD, before this session's edits
@@ -435,6 +438,12 @@ class Sandbox:
         for i, line in enumerate(self.log):
             m = re.match(r"(\w+)(?: \((.*?)\))? (.*)", line)
             self.commits.append((m.group(1), m.group(2) or "", m.group(3), start - timedelta(days=i + 2, hours=3 * i)))
+        # Files each commit touched, when the repo says (data/repos/<repo>.json "commit_files"); a branch's
+        # single own commit touched its repo_files. Used by `git log -- <path>`, `git show --stat` and old versions.
+        self.own_commits = len(session.git_log)
+        self.touched = {k: {_norm(x) for x in v} for k, v in repo.get("commit_files", {}).items()}
+        if self.own_commits == 1:
+            self.touched[self.commits[0][0]] = set(self.branch_files)
         self.test_runs: dict[tuple, str] = {}
         self.env = {"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev", "SHELL": "/bin/bash", "PWD": self.root,
                     "LANG": "C.UTF-8", "TERM": "xterm-256color", "PATH": "/usr/local/bin:/usr/bin:/bin"}
@@ -1240,6 +1249,23 @@ class Sandbox:
 
     # ---------- git
 
+    def _cmd_file(self, argv, cwd, stdin):
+        brief, mime = "-b" in argv or "--brief" in argv, any(a in argv for a in ("-i", "--mime", "--mime-type"))
+        def kind(text):
+            if mime:
+                return "text/plain; charset=" + ("us-ascii" if text.isascii() else "utf-8")
+            if not text:
+                return "empty"
+            return ("ASCII text" if text.isascii() else "Unicode text, UTF-8 text") + \
+                (", with CRLF line terminators" if "\r\n" in text else "")
+        out = []
+        for a in (a for a in argv[1:] if a == "-" or not a.startswith("-")):
+            p = self._resolve(a, cwd) if a != "-" else None
+            what = kind(stdin or "") if a == "-" else "directory" if self._is_dir(p) else \
+                kind(self.files[p]) if p in self.files else f"cannot open `{a}' (No such file or directory)"
+            out.append(what if brief else f"{'/dev/stdin' if a == '-' else a}: {what}")
+        return "\n".join(out), 0, ""
+
     def _cmd_git(self, argv, cwd, stdin):
         args = argv[1:]
         while args and (args[0] in ("--no-pager", "-P") or args[0] == "-C" or args[0].startswith("-c")):
@@ -1267,34 +1293,81 @@ class Sandbox:
         if sub == "diff":
             if any(a in rest for a in ("--cached", "--staged")):
                 return "", 0, ""
-            paths = [p for p in (self._resolve(a, cwd) for a in rest if not a.startswith("-")) if self._exists(p)]
-            files = [p for p in modified if not paths or p in paths]
+            dashdash = rest.index("--") if "--" in rest else len(rest)
+            revs = [a for a in rest[:dashdash] if not a.startswith("-") and self._commit(a.split("..")[0]) is not None]
+            revs = [x for a in revs for x in a.split("..") if x]
+            args = [a for a in rest[:dashdash] if not a.startswith("-") and a not in revs] + rest[dashdash + 1:]
+            paths = [p for p in (self._resolve(a, cwd) for a in args) if p is not None and self._exists(p)]
+            if revs:  # a commit against the working tree, or two commits
+                left = self.commits.index(self._commit(revs[0]))
+                right = self.commits.index(self._commit(revs[1])) if len(revs) > 1 else None
+                candidates = sorted(set(self.files) | set(self.originals) | self.branch_files)
+                pairs = [(p, self._version_at(p, left), self._version_at(p, right) if right is not None else self.files.get(p))
+                         for p in candidates if self._under_any(p, paths)]
+            else:
+                pairs = [(p, self.originals.get(p, ""), self.files[p]) for p in modified if self._under_any(p, paths)]
+            pairs = [(p, a, b) for p, a, b in pairs if a != b and (a is not None or b is not None)]
             if "--name-only" in rest:
-                return "\n".join(files), 0, ""
-            if "--stat" in rest:
-                return "\n".join(f" {p} | {sum(len(o.splitlines()) + len(n.splitlines()) for o, n in self.diffs[p])} +-"
-                                 for p in files), 0, ""
+                return "\n".join(p for p, _, _ in pairs), 0, ""
+            diffs = [(p, a, b, list(difflib.unified_diff((a or "").splitlines(), (b or "").splitlines(), lineterm="", n=3))[2:])
+                     for p, a, b in pairs]
+            if "--stat" in rest or "--numstat" in rest or "--shortstat" in rest:
+                counts = [(p, sum(x.startswith("+") for x in d), sum(x.startswith("-") for x in d)) for p, _, _, d in diffs]
+                if "--numstat" in rest:
+                    return "\n".join(f"{n}\t{m}\t{p}" for p, n, m in counts), 0, ""
+                width = max((len(p) for p, _, _ in counts), default=0)
+                lines = [] if "--shortstat" in rest else \
+                    [f" {p:<{width}} | {n + m:>3} {'+' * min(n, 40)}{'-' * min(m, 40)}" for p, n, m in counts]
+                if counts:
+                    lines.append(f" {len(counts)} file{'s' if len(counts) > 1 else ''} changed, "
+                                 f"{sum(n for _, n, _ in counts)} insertions(+), {sum(m for _, _, m in counts)} deletions(-)")
+                return "\n".join(lines), 0, ""
             out = []
-            for p in files:
-                out += [f"diff --git a/{p} b/{p}", f"--- a/{p}", f"+++ b/{p}"]
-                for old, new in self.diffs[p]:
-                    out += ["@@"] + [f"-{x}" for x in old.split("\n")] + [f"+{x}" for x in new.split("\n")]
+            for p, a, b, d in diffs:
+                out += [f"diff --git a/{p} b/{p}"] + (["new file mode 100644"] if a is None else []) + \
+                    (["deleted file mode 100644"] if b is None else []) + \
+                    [f"--- {'/dev/null' if a is None else 'a/' + p}", f"+++ {'/dev/null' if b is None else 'b/' + p}"] + d
             return "\n".join(out), 0, ""
         if sub == "show":
             spec = next((a for a in rest if ":" in a and not a.startswith("-")), None)
             if spec:
                 rev, path = spec.split(":", 1)
                 p = self._resolve(path, cwd)
-                if p in self.originals:
-                    return self.originals[p], 0, ""
-                if p in self.tracked and p in self.files:
-                    return self.files[p], 0, ""
-                return "", 128, f"fatal: path '{path}' does not exist in '{rev or 'HEAD'}'"
+                c = self._commit(rev or "HEAD")
+                if c is None:
+                    return "", 128, f"fatal: invalid object name '{rev}'."
+                text = self._version_at(p, self.commits.index(c)) if p is not None else None
+                if text is None:
+                    return "", 128, f"fatal: path '{path}' does not exist in '{rev or 'HEAD'}'"
+                return text, 0, ""
             revs = [a for a in rest if not a.startswith("-")] or ["HEAD"]
             found = [self._commit(r) for r in revs]
             if None in found:
                 return "", 128, f"fatal: bad object {revs[found.index(None)]}"
-            return "\n\n".join(self._log_entry(c) for c in found), 0, ""
+            entries = []
+            for c in found:
+                files = sorted(self.touched.get(c[0], ()))
+                entry = self._log_entry(c)
+                if files and any(a in rest for a in ("--stat", "--name-only", "--name-status")):
+                    i = self.commits.index(c)
+                    before = [self._version_at(f, i + 1) if i + 1 < len(self.commits) else None for f in files]
+                    if "--name-only" in rest:
+                        entry += "\n\n" + "\n".join(files)
+                    elif "--name-status" in rest:
+                        entry += "\n\n" + "\n".join(f"{'A' if b is None else 'M'}\t{f}" for f, b in zip(files, before))
+                    else:
+                        counts = []
+                        for f, b in zip(files, before):
+                            d = list(difflib.unified_diff((b or "").splitlines(), (self._version_at(f, i) or "").splitlines(),
+                                                          lineterm="", n=0))[2:]
+                            counts.append((sum(x.startswith("+") for x in d), sum(x.startswith("-") for x in d)))
+                        width = max(map(len, files))
+                        entry += "\n\n" + "\n".join(f" {f:<{width}} | {a + r:>3} {'+' * min(a, 40)}{'-' * min(r, 40)}"
+                                                     for f, (a, r) in zip(files, counts))
+                        entry += (f"\n {len(files)} file{'s' if len(files) > 1 else ''} changed, "
+                                  f"{sum(a for a, _ in counts)} insertions(+), {sum(r for _, r in counts)} deletions(-)")
+                entries.append(entry)
+            return "\n\n".join(entries), 0, ""
         if sub == "branch":
             listing = [a for a in rest if a.split("=")[0] in ("--contains", "--no-contains", "--merged", "--no-merged",
                                                               "--points-at", "--list", "-l", "--format", "--sort")]
@@ -1359,6 +1432,18 @@ class Sandbox:
             if c is None:
                 return "", 128, "fatal: ambiguous argument: unknown revision or path not in the working tree."
             return (c[0] if "--short" in rest else _full_hash(c[0])), 0, ""
+        if sub == "check-ignore":
+            patterns = [(k, x.strip()) for k, x in enumerate(self.files.get(".gitignore", "").split("\n"), 1)
+                        if x.strip() and not x.startswith("#")]
+            out = []
+            for a in (a for a in rest if not a.startswith("-")):
+                p = (self._resolve(a, cwd) or a).rstrip("/")
+                hit = next(((k, x) for k, x in patterns
+                            if any(fnmatch.fnmatch(part, x.rstrip("/")) for part in p.split("/"))
+                            or fnmatch.fnmatch(p, x.lstrip("/").rstrip("/"))), None)
+                if hit:
+                    out.append(f".gitignore:{hit[0]}:{hit[1]}\t{a}" if "-v" in rest or "--verbose" in rest else a)
+            return "\n".join(out), 0 if out else 1, ""
         if sub == "ls-files":
             return "\n".join(sorted(p for p in self.tracked if p in self.files)), 0, ""
         if sub == "remote":
@@ -1378,6 +1463,25 @@ class Sandbox:
         if sub in GIT_ACTIONS:
             raise Action(f"git {sub}")
         raise Unsupported(f"git {sub}")
+
+    def _version_at(self, p: str, i: int | None) -> str | None:
+        """A file as of commit i (index into self.commits, 0 = HEAD), or None if it didn't exist then. Before
+        the branch's own commits, files they changed are as in the shared repo."""
+        if i is None:
+            return self.files.get(p)
+        if self.touched:  # did any commit at or before i touch (add) it?
+            known = [k for k, c in enumerate(self.commits) if p in self.touched.get(c[0], ())]
+            if known and i > max(known):
+                return None
+        if i >= self.own_commits and p in self.branch_files:
+            return self.base_files.get(p)
+        if p in self.originals:
+            return self.originals[p]
+        return self.files[p] if p in self.tracked and p in self.files else None
+
+    @staticmethod
+    def _under_any(p: str, paths: list) -> bool:
+        return not paths or any(p == x or p.startswith(x.rstrip("/") + "/") or x == "" for x in paths)
 
     def _commit(self, rev: str):
         """The commit a revision names (hash prefix, HEAD~n, a branch), or None."""
@@ -1424,6 +1528,12 @@ class Sandbox:
 
     def _git_log(self, rest: list[str]) -> str:
         n, fmt, commits = len(self.commits), None, list(self.commits)
+        if self.touched:
+            dashdash = rest.index("--") if "--" in rest else len(rest)
+            paths = [_norm(a) for a in rest[dashdash + 1:]] + \
+                [_norm(a) for a in rest[:dashdash] if not a.startswith("-") and self._exists(_norm(a)) and self._commit(a) is None]
+            if paths:
+                commits = [c for c in commits if any(self._under_any(f, paths) for f in self.touched.get(c[0], ()))]
         k = 0
         while k < len(rest):
             a = rest[k]

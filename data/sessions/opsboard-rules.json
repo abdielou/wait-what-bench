@@ -75,14 +75,14 @@
      "name": "write_file",
      "args": {
       "path": "src/server/alerts.ts",
-      "content": "import { readFile, writeFile } from 'node:fs/promises';\nimport YAML from 'yaml';\n\nexport type Rule = {\n  id: string;\n  name: string;\n  metric: string;\n  op: '>' | '<';\n  threshold: number;\n  for: string;\n  severity: 'info' | 'warning' | 'critical';\n};\n\nexport const RULES_PATH = 'config/alerts.yaml';\n\nexport async function loadRules(path = RULES_PATH): Promise<Rule[]> {\n  const doc = YAML.parse(await readFile(path, 'utf8'));\n  return doc.rules ?? [];\n}\n\n// A reload with a bad rule is rejected and the old rules stay active, so catch problems before writing.\nexport function validateRule(r: Rule): string | null {\n  if (!r.name.trim()) return `${r.id}: name is empty`;\n  if (!Number.isFinite(r.threshold)) return `${r.id}: threshold must be a number`;\n  if (!['info', 'warning', 'critical'].includes(r.severity)) return `${r.id}: unknown severity ${r.severity}`;\n  return null;\n}\n\nexport async function saveRules(rules: Rule[], path = RULES_PATH): Promise<void> {\n  const problems = rules.map(validateRule).filter(Boolean);\n  if (problems.length) throw new Error(problems.join('; '));\n  await writeFile(path, YAML.stringify({ rules }), 'utf8');\n}\n"
+      "content": "import { readFile, writeFile } from 'node:fs/promises';\nimport YAML from 'yaml';\n\nexport type Rule = {\n  id: string;\n  name: string;\n  metric: string;\n  op: '>' | '<';\n  threshold: number;\n  for: string;\n  severity: 'info' | 'warning' | 'critical';\n};\n\nexport const RULES_PATH = 'config/alerts.yaml';\n\nexport async function loadRules(path = RULES_PATH): Promise<Rule[]> {\n  const doc = YAML.parse(await readFile(path, 'utf8'));\n  return doc.rules ?? [];\n}\n\n// A reload with a bad rule is rejected and the old rules stay active, so catch problems before writing.\nexport function validateRule(r: Rule): string | null {\n  if (!r.name.trim()) return `${r.id}: name is empty`;\n  if (!Number.isFinite(r.threshold)) return `${r.id}: threshold must be a number`;\n  if (!['info', 'warning', 'critical'].includes(r.severity)) return `${r.id}: unknown severity ${r.severity}`;\n  if (!['>', '<'].includes(r.op)) return `${r.id}: op must be > or <`;\n  if (!/^\\d+[smh]$/.test(r.for)) return `${r.id}: for must look like 5m or 1h`;\n  return null;\n}\n\nexport async function saveRules(rules: Rule[], path = RULES_PATH): Promise<void> {\n  const problems = rules.map(validateRule).filter(Boolean);\n  if (new Set(rules.map((r) => r.id)).size !== rules.length) problems.push('rule ids must be unique');\n  if (problems.length) throw new Error(problems.join('; '));\n  await writeFile(path, YAML.stringify({ rules }), 'utf8');\n}\n"
      }
     }
    ]
   },
   {
    "role": "tool",
-   "content": "Wrote 33 lines to src/server/alerts.ts"
+   "content": "Wrote 36 lines to src/server/alerts.ts"
   },
   {
    "role": "assistant",
@@ -188,7 +188,7 @@
   },
   {
    "id": "rul-c2",
-   "text": "in the rules form you just built, make the 'for' duration editable too, validated like 5m or 1h"
+   "text": "in the rules form you just built, make the 'for' duration editable too"
   },
   {
    "id": "rul-c3",
