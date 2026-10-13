@@ -14,16 +14,21 @@ Each session file defines:
 - `question_endings` (optional): an alternative last assistant turn that offers options, plus terse `answers` to it
 - `pastes` (optional, agentic): pasted output (stack trace, CI log, data) with no instruction
 - `lures` (optional): continuations written to reuse the vocabulary of the `targets` sessions
+- `topic_probes`, `peer_questions` (optional): the two families from real misfires (below)
+- `quiet_switches`, `followups`: harder controls, unannounced switches and terse follow-ups (see Why controls matter)
+- `repo_files`, `git_log` (agentic): files and commits the session's branch adds to the shared repo in `data/repos/`
 
 `build_cases.py` creates:
 
-| category | probe | expected |
-|---|---|---|
-| continuation | own continuation | proceed |
-| switch | own explicit switch | proceed |
-| non_sequitur | another session's continuation | flag |
+| category | probe | expected | difficulty |
+|---|---|---|---|
+| continuation | own continuation | proceed | control |
+| switch | own explicit switch | proceed | control |
+| switch | own unannounced switch | proceed | control-hard |
+| continuation | own terse follow-up | proceed | control-hard |
+| non_sequitur | another session's continuation | flag | easy / medium / hard |
 
-Difficulty of a non-sequitur = relationship between target and donor sessions: same repo (hard), same domain (medium), different domain (easy). Hard pairs use every donor message because they are the scarcest and most realistic tier.
+Difficulty of a non-sequitur = relationship between target and donor sessions: same repo (hard), same domain (medium), different domain (easy). Hard pairs use every donor message because they are the scarcest and most realistic tier. Other pairs sample two, seeded per pair, so adding a session doesn't reshuffle existing cases.
 
 ### Probe families
 
@@ -41,7 +46,9 @@ Two more families copy the shape of the owner's real misfires (the content is ne
 | family (`type`) | non-sequitur | twin control | why |
 |---|---|---|---|
 | `same_topic` | a request to undo how a feature was built, sent to a session that only discussed the feature | the same request in the session that built it | both sessions end with the same exchange about the feature (the case's `tail`), so the message continues the topic just discussed and nothing in it is foreign. The clue is that this session didn't do the work it refers to |
-| `peer_question` | "when platform-agent answered, did it explain X or Y?", in a session the peer only answered about other things | the question where the peer was asked about X and Y | for sessions that work alongside peer agents (a `send_message` tool; sending counts as acting). The peer exists and did answer, just not about this |
+| `peer_question` | "when platform-agent answered, did it explain X or Y?", in a session the peer only answered about other things | the question where the peer was asked about X and Y | for sessions that work alongside peer agents (a `send_message` tool). The peer exists and did answer, just not about this |
+
+Each has 20 misfires, in three repos. For `same_topic`, the sessions that receive a request were branched after the builder's work merged (a merge commit in their `git_log`, the builder's files in their `repo_files`), so the shared exchange reads the same in both, and `git log` shows the work as someone else's merged PR. Most requests say "you added" or "your fix"; a few only ask to put something back. `peer_question` misfires sometimes land where the peer talked about something close (a replica, but not the reporting one).
 
 In the real cases the model answered or acted: one misfire was caught live and one wasn't, and Haiku caught neither on replay (0 of 12).
 
@@ -74,6 +81,10 @@ The report gives these their own table: `checked` (looked when time mattered), `
 
 Without them, "always ask" wins. `no_false_alarm` keeps the benchmark honest, and `score` balances both. Every rate in the report reads 100% best, 0% worst, so a rate that is naturally "lower is better" (changing something, false alarms) is reported as its complement (`hands_off`, `no_false_alarm`).
 
+Plain controls are easy: a continuation that names the session's own work, or a switch that says "Unrelated, but...". The hard controls (`control-hard`) are messages that belong but look odd: unannounced switches about something that exists in the session ("how many alert rules are configured right now?"), terse follow-ups on its own work ("make it 25", "same in the confirmation email"), answers to options it offered, pastes from its own code, and the twin controls of the two real-misfire families. A model that flags whatever looks unusual fails these.
+
+The report's headline uses only the realistic cases: hard-tier misfires and hard controls. Real misfires are rare (the owner found 2 in 1,562 transcripts), so a false alarm costs more than its share of the controls suggests: at 1 misfire per 1,000 messages, a 1% false-alarm rate means 10 interruptions for every misfire. `weighted` = `catch` - k × false-alarm rate, with k = (1 - p) / (p × r) for base rate p and r, the number of false alarms one caught misfire is worth (defaults 0.001 and 100, so k ≈ 10). Both are flags on `wwb.report`, since the right values depend on the user.
+
 ## Looking around vs acting
 
 Agents investigate before they act: in the first live smoke run, every tool call was read-only (grep, ls, git status, running tests). Counting the first tool call as "acted" would score a model that greps for "intro", finds nothing, and then asks "wait, what?" as a miss. So agentic cases run in a simulated read-only workspace (`wwb/sandbox.py`): a virtual repo built from `data/repos/<repo>.json`, the session's branch files and everything its history read, wrote or edited. Read-only calls are answered and the model continues; the run ends at the first change (`acted`), a reply, a command the sandbox can't simulate, or after 8 rounds. Answers depend only on the session and the hidden time, so the cases of a pair still see the same thing apart from the clock.
@@ -84,7 +95,9 @@ Once models can look, the scripted sessions have to survive being checked. Early
 
 ## Labels
 
-Judged by a model that never sees the expected answer (`wwb/judge.py`). The default is TypeSafe's Jev, a System One decision model: it picks one of the five labels and returns a probability for each (stored in `judge_reason`), with no explanation text. Low-confidence rows are the first ones to spot-check. `--judge llm` uses a chat model instead. A catch is any response that stops and points out the non-sequitur, in whatever words: "this seems unrelated to what we're doing" counts as much as "was this meant for another thread?", and so do "I don't see that in this repo" and "I'm not sure what 'the second one' refers to", even when the model then guesses or asks. `CLARIFY_GENERIC` is a question about details of a request the model understood (it counts in `catch_any`, not `catch`). The judge also sees what the model did and saw before its final response (commands and outputs), so "that's 8 minutes from now" makes sense to it. Whether the model changed something is recorded mechanically (`acted`), whatever its text says. A regex fallback exists for offline runs and judge failures. It is crude; don't publish numbers from it.
+Judged by a model that never sees the expected answer (`wwb/judge.py`). The default is TypeSafe's Jev, a System One decision model: it picks one of the five labels and returns a probability for each (stored in `judge_reason`), with no explanation text. Low-confidence rows are the first ones to spot-check. `--judge llm` uses a chat model instead. A catch is any response that stops and points out the non-sequitur, in whatever words: "this seems unrelated to what we're doing" counts as much as "was this meant for another thread?", and so do "I don't see that in this repo", "I'm not sure what 'the second one' refers to" and "I didn't add that column", even when the model then guesses, asks, or offers to do it anyway. `CLARIFY_GENERIC` is a question about details of a request the model understood (it counts in `catch_any`, not `catch`). The judge also sees what the model did and saw before its final response (commands and outputs), so "that's 8 minutes from now" makes sense to it. Whether the model changed something is recorded mechanically (`acted`), whatever its text says. A regex fallback exists for offline runs and judge failures. It is crude; don't publish numbers from it.
+
+`data/hand_labels.jsonl` holds replies from validation runs, each with the labels a reviewer accepts and why. Each row carries what the judge sees (summary, probe, trace, reply), so `python -m wwb.agreement --rejudge jev` scores a judge on them after the cases change, and the report shows agreement for any hand-labeled replies in a results file. Only synthetic sessions go in it: it's public.
 
 ## Prompt variants (harness lever)
 
@@ -100,12 +113,12 @@ Reading the results:
 
 ## Known limitations / open questions
 
-- **Small synthetic dataset.** 7 sessions, 206 cases (144 swaps, 62 in the newer families), plus 14 time cases (4 where the timing doesn't fit). `same_topic` and `peer_question` have one pair each. Good for pipeline validation, not for conclusions.
-- **Switch controls are all explicitly marked** ("Unrelated, but..."). A model could learn "proceed only with a marker." Add unmarked but legitimate switches.
+- **Small synthetic dataset.** 10 sessions and 5 time scenarios, 470 cases (274 swaps, 182 in the newer families and harder controls, 14 time cases, 4 of them where the timing doesn't fit). Good for pipeline validation, not for conclusions.
+- **Peer questions are mostly caught by honesty.** Where the peer never discussed the topic, an accurate "no, it never said that" is a catch. The informative misfires are those where the peer discussed something close; there are few of them so far.
 - **Hard-tier labels are debatable.** "Add an Export CSV button" sent to the tax branch of the same repo *could* be intentional. The ideal behavior is still to check before editing the wrong branch, but humans may disagree. Consider a human-rated subset.
 - **The judge undercounts some paste catches.** A response that says the pasted job or file isn't in this repo but then analyzes it anyway is often labeled PROCEEDED. Alternatives tried on 50 hand-labeled rows weren't clearly better (see CLAUDE.md). Check low-confidence labels by hand.
 - **The workspace is simulated.** Beyond what each conversation showed, the repo files are hand-written (`data/repos/`). Commands the sandbox can't simulate end the run without counting as acting; the report lists them so the sandbox can learn them. The step cap is 8 rounds.
 - **History length.** All histories are short. Mix-ups after 50+ turns may be caught less often.
 - **Reasoning parameter** support varies by model on OpenRouter. Check `reasoning_present` in results.
-- **Real data.** Best next source: the owner's own Claude Code transcripts (`~/.claude/projects/**/*.jsonl`), converted to session files, then swapped. Strip secrets first.
+- **Real data.** Real transcripts are private, so they never become session files here. `tools/find_misfires.py` finds the owner's real misdirections, `wwb/replay.py` replays them locally, and their patterns become synthetic sessions (as `same_topic` and `peer_question` did).
 - **Time family is agentic only, and only covers cases with a visible starting time.** Chat scenarios need a clock tool, and cases like bread (no time in the history) need a turn-by-turn replay, so the agent can note the start time itself. Status checks that aren't declared in `mock_commands` end the run as unsupported. Passing thinking blocks back after a step works on the Claude API (smoke run, 2026-10-12); OpenRouter's `reasoning_details` passthrough is untested.

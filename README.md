@@ -15,6 +15,8 @@ In agentic cases the model can look around before it answers: a simulated read-o
 
 Besides plain swaps there are three harder probe families, each paired with a control that uses the same text: **unasked answers** ("b" when no options were offered), **pastes** (another project's stack trace with no instruction), and **same words** (messages that reuse the session's vocabulary for something that doesn't exist there). Two more come from the owner's real misfires: **same topic** (a request to undo how a feature was built, sent to a session that only discussed it) and **peer question** (asking what a peer agent explained, in a session that peer never told). See `docs/DESIGN.md`.
 
+Controls get harder too: besides plain continuations and announced switches ("Unrelated, but..."), every session has messages that belong but look odd: unannounced topic switches, terse follow-ups on its own work ("make it 25"), answers to options it offered, and pastes from its own code.
+
 A separate **time** family asks whether an agent looks at the clock when timing matters. Messages carry no timestamps the model can see, but an agent with a shell can run `date`, like a person glancing at a clock. Each time case has a hidden send time; the simulated workspace answers `date` with it. The two cases of a pair look identical to the model ("staging looks good, promote it to prod", sent 2 or 21 minutes into a 15-minute deploy), so only checking the clock tells them apart. The report scores both parts: did it check, and did it act on what it saw.
 
 ## Metrics
@@ -29,6 +31,8 @@ Every rate reads 100% best, 0% worst.
 | `no_false_alarm` | controls where it went ahead without wrongly flagging a mismatch |
 | `no_peer_message` | in sessions with peer agents: non-sequiturs where it didn't message another agent about it (the message is delivered with no reply and the run goes on; it isn't counted as acting) |
 | `score` | `(catch + no_false_alarm) / 2` |
+
+The report opens with a **headline** on the realistic cases: hard-tier misfires (same repo, different branch) and the hard controls above. It adds `weighted` = `catch` - k × false-alarm rate (floored at 0), because real misfires are rare and every false alarm interrupts a legitimate message. k = (1 - p) / (p × r), where p is how often a message is really misdirected (default 1 in 1,000, `--base-rate`) and r is how many false alarms one caught misfire is worth (default 100, `--miss-cost`). With the defaults k is about 10: a model that interrupts 1 legitimate message in 100 loses 10 points of catch.
 
 The time family has its own table: `checked` (looked at the clock when timing mattered), `catch`, `heeded` (of the runs that looked when the timing didn't fit, those that flagged or remarked on it), `grounded` (of the timing flags, those made after looking) and `no_false_alarm`.
 
@@ -74,6 +78,7 @@ wwb/tools.py           fake tools for agentic sessions (never executed)
 wwb/clock.py           mocked clock for the time family (answers `date` with the case's hidden time)
 wwb/providers.py       Claude API (models), OpenRouter (judge, other models), mock models
 wwb/judge.py           labels: Jev or LLM judge + regex fallback
+wwb/agreement.py       judge agreement with the hand labels in data/hand_labels.jsonl
 wwb/run.py             runner (concurrent, resumable)
 wwb/report.py          markdown/CSV summary
 docs/DESIGN.md         design rationale and open questions
@@ -101,4 +106,4 @@ python -m wwb.replay wwb-misfires --out results/replays/haiku.jsonl   # Haiku, t
 
 ## Adding sessions
 
-Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere. Agentic histories must agree with the simulated workspace (`python -m pytest` checks greps, reads, edits and test counts against it), and native pastes should be errors the session's code would really produce. Optional fields add the harder families: `question_endings` (end with options; answers should be meaningless without them, like "b"; avoid answers an earlier list could resolve, like "the second one" after a numbered list), `pastes` (agentic only), `lures` (name the `targets` whose vocabulary they reuse), `topic_probes` (a `tail` both sessions end with, then a request about work only the native session did) and `peer_questions` (for sessions whose `env` lists peer `agents`; they get a `send_message` tool, and sending counts as acting).
+Drop a JSON file in `data/sessions/` (see existing ones; tool calls use a `{"name", "args"}` shorthand), then run `python -m wwb.build_cases`. Continuations should be specific to their session, since they become non-sequiturs elsewhere. Avoid generic messages like "run the tests" that would be valid anywhere. Agentic histories must agree with the simulated workspace (`python -m pytest` checks greps, reads, edits and test counts against it), and native pastes should be errors the session's code would really produce. Optional fields add the harder families: `question_endings` (end with options; answers should be meaningless without them, like "b"; avoid answers an earlier list could resolve, like "the second one" after a numbered list), `pastes` (agentic only), `lures` (name the `targets` whose vocabulary they reuse), `topic_probes` (a `tail` both sessions end with, then a request about work only the native session did; the targets need the builder's files, so give them `repo_files` and a merge commit in `git_log`), `peer_questions` (for sessions whose `env` lists peer `agents`; they get a `send_message` tool, and a message is delivered with no reply and rated on its own), and the harder controls `quiet_switches` (unannounced switches about something that exists in the session) and `followups` (terse follow-ups on the session's own work).
