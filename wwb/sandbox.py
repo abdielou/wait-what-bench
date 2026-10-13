@@ -17,11 +17,13 @@ tool call is classified:
   unsupported  can't be simulated or safely classified. The response ends without counting as
                acting, and the command is kept in the trace so the sandbox can learn it.
 
-Inline code (`python -c`, `node -e`) can't be simulated either, but models use it to inspect
-things, so it gets "permission denied" (as in a harness that requires approval) and the model
-carries on. So does writing a scratch file outside the repository, which changes nothing in it.
-Shell scripts (`sh -c`, `for` loops, `xargs`) are run command by command. Database clients can't
-connect, as on a laptop without the database running.
+Inline code (`python -c`, `node -e`, `python - <<EOF`) can't be simulated either, but models use it
+to inspect things, so it gets "permission denied" (as in a harness that requires approval) and the
+model carries on. So does writing a scratch file outside the repository, which changes nothing in it.
+Shell scripts (`sh -c`, `for` loops, `xargs`, `find -exec`) are run command by command, and a
+here-document is its command's input. Database clients can't connect, as on a laptop without the
+database running. Other sessions' branches sit on main with their work uncommitted, as they do in
+the sessions, so ranges like `main..feat/x` are empty.
 
 Outputs depend only on the session and the hidden time, so the two cases of a time pair see
 identical answers except from the clock and the time-dependent status commands.
@@ -102,6 +104,21 @@ def _cap(text: str) -> str:
     return text
 
 
+def _positional(script: str, params: list[str]) -> str:
+    """$0, $1.. and $@ in an `sh -c SCRIPT NAME ARGS...` script, filled in from NAME ARGS..."""
+    if not params:
+        return script
+    words = " ".join(shlex.quote(x) for x in params[1:])
+    script = script.replace('"$@"', words).replace('"${@}"', words)
+
+    def value(m):
+        name = m.group(1) or m.group(2)
+        if name in ("@", "*"):
+            return words
+        return params[int(name)] if int(name) < len(params) else ""
+    return re.sub(r"\$\{(\d+|[@*])\}|\$(\d|[@*])", value, script)
+
+
 def _split_chain(command: str) -> list[tuple[str | None, list[str]]]:
     """Quote-aware split into [(operator before, [pipeline segments])], operators ; && || (and
     newlines and a trailing &, both treated like ;)."""
@@ -161,6 +178,8 @@ def _split_chain(command: str) -> list[tuple[str | None, list[str]]]:
     return [(o, [s.strip() for s in p]) for o, p in chain if any(s.strip() for s in p)]
 
 
+_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][\w.-]*)\2")
+_HERESTRING = re.compile(r"<<<[ \t]*(?:'([^']*)'|\"([^\"]*)\"|(\S+))")
 _FOR = re.compile(r"(^|[;&|\n(]\s*)for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*[;\n]\s*do\s+(.*?)\s*[;\n]\s*done\b", re.S)
 
 
@@ -449,6 +468,7 @@ class Sandbox:
         # A file as some commit left it, when a later commit changed it again ("commit_versions").
         self.versions = {k: {_norm(x): t for x, t in v.items()} for k, v in repo.get("commit_versions", {}).items()}
         self.test_runs: dict[tuple, str] = {}
+        self.heredocs: list[str] = []  # bodies of the current command's here-documents
         self.env = {"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev", "SHELL": "/bin/bash", "PWD": self.root,
                     "LANG": "C.UTF-8", "TERM": "xterm-256color", "PATH": "/usr/local/bin:/usr/bin:/bin"}
         self._replay(session.history if history is None else history)
@@ -567,6 +587,7 @@ class Sandbox:
             return Result("read", _cap(self._grep_tool(str(args.get("pattern", "")), str(args.get("path") or "."))))
         if name == "run_command":
             self._clock = self._state = self._denied = False
+            self.heredocs = []
             try:
                 out, code = self._shell(str(args.get("command", "")))
             except Action:
@@ -602,8 +623,7 @@ class Sandbox:
 
     def _shell(self, command: str) -> tuple[str, int]:
         if "<<" in command:
-            raise Action("heredoc") if re.search(r">\s*[^&\s/]", command) else Unsupported("heredoc")
-
+            command = self._take_heredocs(command)
         command = self._substitute(self._unroll_loops(command))
         outs, code, cwd = [], 0, ""
         for op, pipeline in _split_chain(command):
@@ -613,6 +633,50 @@ class Sandbox:
             if out:
                 outs.append(out.rstrip("\n"))
         return "\n".join(outs), code
+
+    def _take_heredocs(self, command: str) -> str:
+        """Each <<WORD here-document becomes its command's input: the body lines move to self.heredocs and
+        the marker becomes a `<` redirect from it, so the usual rules apply (`cat > file <<EOF` writes a file,
+        `python - <<EOF` runs inline code). Bodies aren't expanded. A <<<WORD here-string works the same way."""
+        lines, out, k = command.split("\n"), [], 0
+        while k < len(lines):
+            line, k, quote, i, marks, new = lines[k], k + 1, None, 0, [], []
+            while i < len(line):  # markers outside quotes; <<< is a here-string, not a here-document
+                c = line[i]
+                if quote:
+                    quote = None if c == quote else quote
+                elif c in "'\"":
+                    quote = c
+                elif line.startswith("<<<", i):
+                    m = _HERESTRING.match(line, i)
+                    if not m:
+                        raise Unsupported("here-string")
+                    marks.append((False, None, next(g for g in m.groups() if g is not None) + "\n"))
+                    new.append(f"<@@heredoc{len(self.heredocs) + len(marks) - 1}")
+                    i = m.end()
+                    continue
+                elif line.startswith("<<", i):
+                    m = _HEREDOC.match(line, i)
+                    if not m:
+                        raise Unsupported("heredoc")
+                    marks.append((m.group(1) == "-", m.group(3), None))
+                    new.append(f"<@@heredoc{len(self.heredocs) + len(marks) - 1}")
+                    i = m.end()
+                    continue
+                new.append(c)
+                i += 1
+            out.append("".join(new))
+            for strip_tabs, word, text in marks:  # bash reads to the end when the delimiter never comes
+                if text is not None:
+                    self.heredocs.append(text)
+                    continue
+                body = []
+                while k < len(lines) and (lines[k].lstrip("\t") if strip_tabs else lines[k]) != word:
+                    body.append(lines[k].lstrip("\t") if strip_tabs else lines[k])
+                    k += 1
+                k += 1
+                self.heredocs.append("\n".join(body) + "\n")
+        return "\n".join(out)
 
     def _unroll_loops(self, command: str) -> str:
         """`for x in a b; do BODY; done` becomes BODY with x=a, then BODY with x=b."""
@@ -697,7 +761,9 @@ class Sandbox:
             if m:
                 target = m.group(1) or (toks[i + 1][0] if i + 1 < len(toks) else "")
                 i += 1 if m.group(1) else 2
-                stdin = self._read_file(target) if self._resolve(target, cwd) in self.files else ""
+                doc = re.fullmatch(r"@@heredoc(\d+)", target)
+                stdin = self.heredocs[int(doc.group(1))] if doc else \
+                    self._read_file(target) if self._resolve(target, cwd) in self.files else ""
                 continue
             words.append((t, quoted))
             i += 1
@@ -738,11 +804,17 @@ class Sandbox:
             self._clock = True
             return clock, 0, cwd, ""
         if prog in ("bash", "sh", "zsh") and argv[1:2] == ["-c"] and len(argv) > 2:  # a shell script: run it here
-            out, code = self._shell(argv[2])
+            out, code = self._shell(_positional(argv[2], argv[3:]))
+            return out, code, cwd, ""
+        if prog in ("bash", "sh", "zsh") and stdin is not None and argv[1:] in ([], ["-s"]):  # a script on stdin
+            out, code = self._shell(stdin)
             return out, code, cwd, ""
         if prog in ("python", "python3", "node", "ruby", "perl", "php") and argv[1:2] and argv[1] in ("-c", "-e", "-p", "-r"):
             self._denied = True
             return "", 126, cwd, f"permission denied: running inline code ({prog} {argv[1]}) isn't allowed in this workspace"
+        if prog in ("python", "python3", "node", "ruby", "perl", "php") and stdin is not None and argv[1:] in ([], ["-"]):
+            self._denied = True  # code piped in or from a here-document
+            return "", 126, cwd, f"permission denied: running inline code ({prog} reading from stdin) isn't allowed in this workspace"
         handler = getattr(self, "_cmd_" + prog.replace("-", "_").replace(".", "_"), None) \
             if re.fullmatch(r"[a-z][a-z0-9._-]*", prog) else None
         if handler:
@@ -821,7 +893,8 @@ class Sandbox:
         if argv[0] == "printf" and args:
             fmt, vals = args[0], args[1:]
             out = re.sub(r"%[-0-9.]*[sdfi]", lambda _: vals.pop(0) if vals else "", fmt)
-            return out.replace("\\n", "\n").replace("\\t", "\t")
+            escapes = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
+            return re.sub(r"\\([ntr\\abfv])", lambda m: escapes[m.group(1)], out)
         while args and args[0] in ("-n", "-e", "-E", "-ne", "-en"):
             args = args[1:]
         return " ".join(args)
@@ -899,14 +972,22 @@ class Sandbox:
             starts.append(argv[i])
             i += 1
         expr = argv[i:]
-        names, inames, ftype, maxdepth, paths_in, paths_out = [], [], None, None, [], []
+        names, inames, ftype, maxdepth, paths_in, paths_out, execs = [], [], None, None, [], [], []
         j = 0
         while j < len(expr):
             t = expr[j]
             nxt = expr[j + 1] if j + 1 < len(expr) else ""
             if t in ("-delete",) or (t in ("-exec", "-execdir") and re.search(r"\b(rm|sed|mv|chmod|perl)\b", " ".join(expr[j:]))):
                 raise Action("find modifies files")
-            if t in ("-exec", "-execdir", "-ok", "-fprint", "-newer"):
+            if t in ("-exec", "-execdir"):  # COMMAND ... {} ; runs once per file, COMMAND ... {} + once for all
+                end = next((k for k in range(j + 1, len(expr)) if expr[k] in (";", "\\;")
+                            or (expr[k] == "+" and expr[k - 1] == "{}")), None)
+                if end is None:
+                    return "", 1, f"find: missing argument to `{t}'"
+                execs.append((expr[j + 1:end], expr[end] == "+"))
+                j = end + 1
+                continue
+            if t in ("-ok", "-okdir", "-fprint", "-newer"):
                 raise Unsupported(f"find {t}")
             if t in ("-name", "-iname"):
                 (names if t == "-name" else inames).append(nxt)
@@ -954,6 +1035,16 @@ class Sandbox:
                        for x in paths_out if x.rstrip("*")):
                     continue
                 out.append(shown)
+        if execs:  # the commands' output replaces the list of paths
+            found, out = out, []
+            for cmd, batched in execs:
+                runs = [[x for a in cmd for x in (found if a == "{}" else [a])]] if batched and found else \
+                    [] if batched else [[a.replace("{}", f) for a in cmd] for f in found]
+                for argv2 in runs:
+                    o, c, _, e = self._simple(" ".join(shlex.quote(a) for a in argv2), cwd, None)
+                    out += [o.rstrip("\n")] if o else []
+                    errs += [e] if e else []
+                    code = code or (1 if c and batched else 0)
         return "\n".join(out), code, "\n".join(errs)
 
     def _files_or_stdin(self, args, cwd, stdin, prog):
@@ -979,11 +1070,19 @@ class Sandbox:
         return text, 1 if errs else 0, "\n".join(errs)
 
     def _head_tail(self, argv, cwd, stdin, tail):
-        n, files, k = 10, [], 1
+        n, files, k, nbytes = 10, [], 1, None
         while k < len(argv):
             a = argv[k]
             if a in ("-n", "--lines") and k + 1 < len(argv):
                 n, k = int(argv[k + 1].lstrip("+-") or 10), k + 2
+                continue
+            if a in ("-c", "--bytes") and k + 1 < len(argv) and argv[k + 1].lstrip("+-").isdigit():
+                nbytes, k = int(argv[k + 1].lstrip("+-")), k + 2
+                continue
+            m = re.fullmatch(r"-c(\d+)|--bytes=(\d+)", a)
+            if m:
+                nbytes = int(m.group(1) or m.group(2))
+                k += 1
                 continue
             m = re.fullmatch(r"-n?(\d+)|--lines=(\d+)", a)
             if m:
@@ -998,6 +1097,9 @@ class Sandbox:
         for name, content in got:
             lines = content.rstrip("\n").split("\n") if content else []
             chunk = "\n".join(lines[-n:] if tail else lines[:n])
+            if nbytes is not None:
+                raw = content.encode()
+                chunk = (raw[-nbytes:] if tail and nbytes else b"" if tail else raw[:nbytes]).decode(errors="replace")
             parts.append((f"==> {name} <==\n" if len(got) > 1 else "") + chunk)
         return "\n\n".join(parts), 1 if errs else 0, "\n".join(errs)
 
@@ -1331,18 +1433,26 @@ class Sandbox:
                        else "nothing to commit, working tree clean")
             return "\n".join(out), 0, ""
         if sub == "log":
-            return self._git_log(rest), 0, ""
+            bad = self._bad_range(rest)
+            return ("", 128, bad) if bad else (self._git_log(rest), 0, "")
         if sub == "diff":
             if any(a in rest for a in ("--cached", "--staged")):
                 return "", 0, ""
             dashdash = rest.index("--") if "--" in rest else len(rest)
-            revs = [a for a in rest[:dashdash] if not a.startswith("-") and self._commit(a.split("..")[0]) is not None]
-            revs = [x for a in revs for x in a.split("..") if x]
-            args = [a for a in rest[:dashdash] if not a.startswith("-") and a not in revs] + rest[dashdash + 1:]
+            bad = self._bad_range(rest[:dashdash])
+            if bad:
+                return "", 128, bad
+            ranges = [a for a in rest[:dashdash] if not a.startswith("-") and ".." in a]
+            revs = [a for a in rest[:dashdash] if not a.startswith("-") and ".." not in a and self._commit(a) is not None]
+            args = [a for a in rest[:dashdash] if not a.startswith("-") and a not in revs and a not in ranges] + rest[dashdash + 1:]
             paths = [p for p in (self._resolve(a, cwd) for a in args) if p is not None and self._exists(p)]
-            if revs:  # a commit against the working tree, or two commits
-                left = self.commits.index(self._commit(revs[0]))
-                right = self.commits.index(self._commit(revs[1])) if len(revs) > 1 else None
+            if ranges or revs:  # a commit against the working tree, or two commits
+                if ranges:  # A..B: A against B; A...B: where they split against B
+                    a_i, b_i, three = self._range(ranges[0])
+                    left, right = (max(a_i, b_i) if three else a_i), b_i
+                else:
+                    left = self.commits.index(self._commit(revs[0]))
+                    right = self.commits.index(self._commit(revs[1])) if len(revs) > 1 else None
                 candidates = sorted(set(self.files) | set(self.originals) | self.branch_files)
                 pairs = [(p, self._version_at(p, left), self._version_at(p, right) if right is not None else self.files.get(p))
                          for p in candidates if self._under_any(p, paths)]
@@ -1509,12 +1619,22 @@ class Sandbox:
             return "\n".join(sorted(p for p in self.tracked if p in self.files)), 0, ""
         if sub == "remote":
             return (f"origin\t{self.remote} (fetch)\norigin\t{self.remote} (push)" if "-v" in rest else "origin"), 0, ""
-        if sub == "grep":  # revisions and pathspec magic are dropped: other branches' trees aren't modeled
+        if sub == "grep":  # pathspec magic is dropped; a revision searches the tree as of that commit
             hashes = {line.split()[0] for line in self.log}
-            keep = [a for a in rest if a not in ("-n", "--") and a not in self.branches and a not in hashes
-                    and not a.startswith(":") and not re.fullmatch(r"(HEAD|origin/\S+)([~^]\d*)*", a)]
-            out, code, err = self._grep(["grep", "-rn"] + keep + ["."], cwd, None)
-            return re.sub(r"(?m)^\./", "", out), code, err
+            dashdash = rest.index("--") if "--" in rest else len(rest)
+            revs = [a for a in rest[:dashdash] if a in self.branches or a in hashes
+                    or re.fullmatch(r"(HEAD|origin/\S+)([~^]\d*)*", a)]
+            keep = [a for a in rest if a not in ("-n", "--") and a not in revs and not a.startswith(":")]
+            if not revs or self._commit(revs[0]) is None:
+                out, code, err = self._grep(["grep", "-rn"] + keep + ["."], cwd, None)
+                return re.sub(r"(?m)^\./", "", out), code, err
+            i, saved = self.commits.index(self._commit(revs[0])), self.files
+            self.files = {f: v for f in set(saved) | set(self.originals) if (v := self._version_at(f, i)) is not None}
+            try:
+                out, code, err = self._grep(["grep", "-rn"] + keep + ["."], cwd, None)
+            finally:
+                self.files = saved
+            return "\n".join(x if x == "--" else f"{revs[0]}:{x.removeprefix('./')}" for x in out.split("\n") if x), code, err
         if sub == "rev-list":
             return (str(len(self.commits)) if "--count" in rest else "\n".join(_full_hash(c[0]) for c in self.commits)), 0, ""
         if sub == "fetch":
@@ -1625,6 +1745,22 @@ class Sandbox:
                 return None
         return self.commits[i + steps] if i + steps < len(self.commits) else None
 
+    def _range(self, spec: str) -> tuple[int, int, bool]:
+        """A..B or A...B as commit indexes (an empty side is HEAD), and whether it has three dots."""
+        m = re.fullmatch(r"(.*?)(\.\.\.?)(.*)", spec)
+        a, b = (self.commits.index(self._commit(x or "HEAD")) for x in (m.group(1), m.group(3)))
+        return a, b, m.group(2) == "..."
+
+    def _bad_range(self, args: list[str]) -> str | None:
+        """git's error for a range with a side that names no commit (other branches all sit at HEAD here)."""
+        for a in args:
+            if a == "--":
+                return None
+            if not a.startswith("-") and ".." in a and any(self._commit(x or "HEAD") is None for x in re.split(r"\.\.\.?", a, maxsplit=1)):
+                return (f"fatal: ambiguous argument '{a}': unknown revision or path not in the working tree.\n"
+                        "Use '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'")
+        return None
+
     def _committed(self) -> str:
         """Everything in the repo as of HEAD (pickaxe searches look here)."""
         return "\n".join(self.originals.get(p, self.files[p]) for p in self.tracked if p in self.files or p in self.originals)
@@ -1663,6 +1799,13 @@ class Sandbox:
                 [_norm(a) for a in rest[:dashdash] if not a.startswith("-") and self._exists(_norm(a)) and self._commit(a) is None]
             if paths:
                 commits = [c for c in commits if any(self._under_any(f, paths) for f in self.touched.get(c[0], ()))]
+        for a in rest:  # A..B: commits in B but not A; A...B: in either but not both
+            if a == "--":
+                break
+            if not a.startswith("-") and ".." in a:
+                left, right, three = self._range(a)
+                keep = range(min(left, right), max(left, right)) if three else range(right, left)
+                commits = [c for c in commits if self.commits.index(c) in keep]
         k = 0
         while k < len(rest):
             a = rest[k]
@@ -1895,7 +2038,55 @@ class Sandbox:
         return self._verbs(argv, {"certificates", "--version"}, "certbot")
 
     def _cmd_alembic(self, argv, cwd, stdin):
-        return self._verbs(argv, {"current", "history", "heads", "show", "branches"}, "alembic")
+        """heads, history, show and branches read the migration scripts; current and check run env.py, which
+        needs the database this machine doesn't have; the rest (upgrade, revision, stamp...) act."""
+        words = [a for a in argv[1:] if not a.startswith("-")]
+        if "--version" in argv:
+            return "alembic 1.13.2", 0, ""
+        if not words:
+            return "", 2, "usage: alembic [-h] [--version] [-c CONFIG] [-n NAME] [-x X] [--raiseerr] [-q] {branches,check,current,downgrade,edit,ensure_version,heads,history,init,list_templates,merge,revision,show,stamp,upgrade} ..."
+        verb = words[0]
+        if verb not in ("heads", "history", "show", "branches", "current", "check"):
+            raise Action("alembic")
+        ini = self.files.get(self._resolve("alembic.ini", cwd) or "")
+        loc = re.search(r"(?m)^script_location\s*=\s*(\S+)", ini or "")
+        if not loc:
+            return "", 1, "FAILED: No config file 'alembic.ini' found, or file has no '[alembic]' section"
+        if verb in ("current", "check"):
+            return "", 1, ("Traceback (most recent call last):\n  ...\nsqlalchemy.exc.OperationalError: (psycopg2.OperationalError) "
+                           'connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: No such file or directory\n'
+                           "\tIs the server running locally and accepting connections on that socket?\n\n"
+                           "(Background on this error at: https://sqlalche.me/e/20/e3q8)")
+        versions = posixpath.join(self._resolve(loc.group(1), cwd) or loc.group(1), "versions")
+        revs = {}  # revision -> (down revision, message, path)
+        for f in sorted(self.files):
+            if posixpath.dirname(f) == versions and f.endswith(".py"):
+                r = re.search(r"(?m)^revision\s*(?::\s*str\s*)?=\s*['\"]([^'\"]+)['\"]", self.files[f])
+                d = re.search(r"(?m)^down_revision\s*(?::[^=]*)?=\s*['\"]([^'\"]+)['\"]", self.files[f])
+                doc = re.match(r'\s*(?:"""|\'\'\')\s*(.*)', self.files[f])
+                if r:
+                    revs[r.group(1)] = (d.group(1) if d else None, doc.group(1).strip().rstrip('"\'') if doc else "", f)
+        downs = {d for d, _, _ in revs.values()}
+        heads = sorted(r for r in revs if r not in downs)
+        if verb == "branches":
+            return "", 0, ""
+        if verb == "heads":
+            return "\n".join(f"{h} (head)" for h in heads), 0, ""
+        if verb == "history":
+            lines = []
+            for h in heads:
+                r = h
+                while r in revs:
+                    d, msg, _ = revs[r]
+                    lines.append(f"{d or '<base>'} -> {r}{' (head)' if r == h else ''}, {msg}")
+                    r = d
+            return "\n".join(lines), 0, ""
+        r = words[1] if len(words) > 1 else ""
+        r = heads[0] if r in ("head", "heads") and heads else r
+        if r not in revs:
+            return "", 1, f"FAILED: No such revision or branch '{r}'"
+        d, msg, f = revs[r]
+        return (f"Rev: {r}{' (head)' if r in heads else ''}\nParent: {d or '<base>'}\nPath: {self.root}/{f}\n\n    {msg}"), 0, ""
 
     def _cmd_helm(self, argv, cwd, stdin):
         return self._verbs(argv, {"list", "status", "get", "history", "template", "version"}, "helm")
@@ -1957,6 +2148,23 @@ class Sandbox:
         return "\n".join(lines), 1 if errs else 0, "\n".join(errs)
 
     _cmd_hexdump = _cmd_xxd
+
+    def _cmd_od(self, argv, cwd, stdin):
+        """`od -c` (characters), with or without addresses (-An)."""
+        if not any(a == "-c" or (a.startswith("-") and not a.startswith("-A") and "c" in a) for a in argv[1:]):
+            raise Unsupported("od without -c")
+        files = [a for a in argv[1:] if not a.startswith("-")]
+        got, errs = self._files_or_stdin(files[:1], cwd, stdin, argv[0])
+        data = (got[0][1] if got else "").encode()
+        names = {0: "\\0", 7: "\\a", 8: "\\b", 9: "\\t", 10: "\\n", 11: "\\v", 12: "\\f", 13: "\\r"}
+        addr = "-An" not in argv
+        lines = []
+        for off in range(0, len(data), 16):
+            cells = "".join(f"{names.get(b, chr(b) if 32 <= b < 127 else f'{b:03o}'):>4}" for b in data[off:off + 16])
+            lines.append((f"{off:07o}" if addr else "") + cells)
+        if addr:
+            lines.append(f"{len(data):07o}")
+        return "\n".join(lines), 1 if errs else 0, "\n".join(errs)
 
     def _cmd_mysql(self, argv, cwd, stdin):
         return "", 1, "ERROR 2002 (HY000): Can't connect to local MySQL server through socket '/var/run/mysqld/mysqld.sock' (2)"
