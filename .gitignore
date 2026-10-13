@@ -5,5 +5,6 @@ results/
 .env
 *.egg-info/
 build/
-wwb-misfires/
-wwb-misfires.zip
+# find_misfires output, whatever --out it was given: private transcripts
+wwb-*/
+wwb-*.zip
