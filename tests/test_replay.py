@@ -62,8 +62,12 @@ def test_build_messages_keeps_what_the_model_saw():
 
 
 def test_load_cases_from_find_misfires_output(tmp_path):
-    rows = transcript() + [row("user", None, "wrong session, sorry")]
+    rows = transcript()
+    misdirected = len(rows) - 1
+    rows += [row("assistant", None, [{"type": "text", "text": "Done, the rate is 8%."}]), row("user", None, "STOP"),
+             row("assistant", None, [{"type": "text", "text": "Stopped."}]), row("user", None, "wrong session, sorry")]
     (tmp_path / "01-shop-s1.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-    (tmp_path / "index.json").write_text(json.dumps([{"n": 1, "misdirected": "make the tax rate 8% for NY"}]))
+    # An index.json from an older find_misfires named "STOP" as the misdirected message.
+    (tmp_path / "index.json").write_text(json.dumps([{"n": 1, "misdirected": "STOP", "matched": "wrong session"}]))
     (name, got, probe), = replay.load_cases(tmp_path)
-    assert name == "01-shop-s1" and probe == len(rows) - 2
+    assert name == "01-shop-s1" and probe == misdirected

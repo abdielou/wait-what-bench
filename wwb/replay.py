@@ -20,7 +20,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -216,21 +218,34 @@ def find_probe(rows: list, text: str) -> int | None:
     return None
 
 
+def _find_misfires():
+    """tools/find_misfires.py, which stays a standalone script people download and run."""
+    spec = importlib.util.spec_from_file_location(
+        "find_misfires", Path(__file__).resolve().parent.parent / "tools" / "find_misfires.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_cases(path: Path, probe_line: int | None = None) -> list:
-    """[(name, rows, probe index)] from a find_misfires output folder or one transcript."""
+    """[(name, rows, probe index)] from a find_misfires output folder or one transcript. The
+    misdirected message is found again with the current script, since an index.json written by an
+    older version may name the wrong one (it once took "STOP" for it)."""
     if path.is_file():
         rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
         if probe_line is None:
             raise SystemExit("a single transcript needs --probe-line")
         return [(path.stem, rows, probe_line)]
-    cases = []
+    fm, cases = _find_misfires(), []
     for e in json.loads((path / "index.json").read_text(encoding="utf-8")):
         dump = next(iter(sorted(path.glob(f"{e['n']:02d}-*.jsonl"))), None)
         if dump is None or not e.get("misdirected"):
             print(f"skip #{e['n']}: no dump or no misdirected message", file=sys.stderr)
             continue
         rows = [json.loads(x) for x in dump.read_text(encoding="utf-8").splitlines() if x.strip()]
-        probe = find_probe(rows, e["misdirected"])
+        patterns = [re.compile(p, re.I) for p in fm.DEFAULT_PATTERNS + [re.escape(e.get("matched") or "")] if p]
+        hits = fm.find_hits(rows, patterns)  # the dump ends at your correction: the last hit is this one
+        probe = max(hits)[1] if hits else find_probe(rows, e["misdirected"])
         if probe is None:
             print(f"skip #{e['n']}: misdirected message not found in {dump.name}", file=sys.stderr)
             continue
@@ -247,6 +262,7 @@ def main(argv=None) -> int:
     ap.add_argument("--variant", default="autonomous", help="system prompt variant (wwb/prompts.py)")
     ap.add_argument("--samples", type=int, default=3, help="replies per case and thinking setting")
     ap.add_argument("--out", type=Path, default=Path("results/replays/replay.jsonl"))
+    ap.add_argument("--only", help="replay only cases whose name contains this")
     ap.add_argument("--dry-run", action="store_true", help="build the requests and count tokens, don't sample")
     args = ap.parse_args(argv)
 
@@ -259,6 +275,8 @@ def main(argv=None) -> int:
     totals: dict = {}
     with open(args.out, "a", encoding="utf-8") as out:
         for name, rows, probe in load_cases(args.path, args.probe_line):
+            if args.only and args.only not in name:
+                continue
             msgs = build_messages(rows, probe)
             tools = tool_definitions(msgs)
             try:
