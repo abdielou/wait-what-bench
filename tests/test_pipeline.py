@@ -753,6 +753,42 @@ def test_chart_splits_hard_misfires_and_draws_valid_svg(tmp_path):
     assert out.read_text() == svg
 
 
+def test_rejudge_relabels_results_without_calling_models(tmp_path, monkeypatch):
+    from wwb import rejudge
+    from wwb.judge import DEFAULT_LLM_JUDGE
+
+    class FakeJudge:
+        calls = 0
+
+        def complete(self, model, messages, **kw):
+            FakeJudge.calls += 1
+            assert model == DEFAULT_LLM_JUDGE and "Did you mean" in messages[0]["content"] or "Done" in messages[0]["content"]
+            if "garbled" in messages[0]["content"]:
+                return Response(text="not json")
+            return Response(text='{"label": "FLAGGED", "reason": "says it does not fit"}')
+
+    monkeypatch.setattr(rejudge, "OpenRouterProvider", FakeJudge)
+    base = {"session_id": "shopfront-tax", "model": "m", "variant": "neutral", "thinking": "off", "sample": 0,
+            "probe": "p", "tool_calls": [], "tool_trace": [], "acted": False, "ended": "answer", "label": "PROCEEDED",
+            "judge": "typesafe/jev-1.13"}
+    rows = [dict(base, case_id="a", response_text="Did you mean another branch?"),
+            dict(base, case_id="b", response_text="Done.", acted=True, ended="action"),
+            dict(base, case_id="c", response_text="", label="ERROR", ended="error"),
+            dict(base, case_id="d", response_text="Did you mean garbled?")]
+    src, out = tmp_path / "r.jsonl", tmp_path / "g.jsonl"
+    src.write_text("\n".join(json.dumps(r) for r in rows))
+    rejudge.main([str(src), "--out", str(out)])
+    got = {r["case_id"]: r for r in load_rows([out])}
+    assert sorted(got) == ["a", "b", "c"]  # d's judge call failed: left out, to retry
+    assert got["a"]["label"] == "FLAGGED" and got["a"]["prev_label"] == "PROCEEDED" and got["a"]["judge"] == DEFAULT_LLM_JUDGE
+    assert got["a"]["prev_judge"] == "typesafe/jev-1.13"
+    assert got["b"]["label"] == "PROCEEDED_WITH_NOTE"  # it acted, so it can't be a catch
+    assert got["c"]["label"] == "ERROR" and "prev_label" not in got["c"]  # model errors aren't judged
+    calls = FakeJudge.calls
+    rejudge.main([str(src), "--out", str(out)])  # resumes: only the failed row is tried again
+    assert FakeJudge.calls == calls + 1 and len(load_rows([out])) == 3
+
+
 def test_judge_sees_what_the_model_looked_at():
     from wwb.judge import trace_text
     fake = FakeDecider({"label": {"type": "choice", "choice": "FLAGGED", "confidence": 0.9, "probabilities": {}}})

@@ -79,7 +79,7 @@ python -m pytest              # offline, uses mock models and a fake Claude clie
 python -m wwb.run --provider mock --models mock/eager,mock/oracle --judge regex
 python -m wwb.report results/run-*.jsonl
 
-# real run: models on the Claude API, judged by Jev on OpenRouter
+# real run: models on the Claude API, judged by Gemini 4 Argon on OpenRouter
 export ANTHROPIC_API_KEY=...      # or `ant auth login`; in Claude Code cloud environments use WWB_ANTHROPIC_API_KEY
 export OPENROUTER_API_KEY=...
 python -m wwb.run --smoke --out results/smoke.jsonl       # cheap check on claude-haiku-5-5 (~200k tokens)
@@ -89,7 +89,7 @@ python -m wwb.report results/first.jsonl
 
 A `--full` run covers the latest Claude models (`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`), all three prompt variants, and thinking off and on. Partial runs (`--smoke`, `--filter`, `--limit`) default to `claude-haiku-5-5` only. Thinking can't be turned off on Fable 5.1 or Opus 5.5, so those cells are skipped (the run lists them at the start); Sonnet 5.5 runs "off" as `between_tools` and Haiku 5.5 as `disabled`. Each model uses its own default effort unless you pass `--effort`. Pick models with `--models`, or run other providers' models through OpenRouter with `--provider openrouter`.
 
-The judge defaults to TypeSafe's Jev (`typesafe/jev-1.13`), a decision model that picks one label and returns a probability for each, via OpenRouter's Decisions API. Use `--judge llm --judge-model <id>` for a chat-model judge instead.
+The judge defaults to Gemini 4 Argon (`google/gemini-4-argon`) through OpenRouter, which agreed with the hand labels most often (see `docs/DESIGN.md`, Labels). `--judge-model <id>` picks another chat model, and `--judge jev` uses TypeSafe's Jev, a decision model that returns a probability for each label. `python -m wwb.rejudge results/run.jsonl --out results/run-new.jsonl` labels an existing results file again with another judge, without calling the models.
 
 Re-running with the same `--out` resumes and retries errors. Until the code and the evals are validated, the runner refuses whole-dataset runs unless you pass `--full`.
 
@@ -106,6 +106,7 @@ wwb/clock.py           mocked clock for the time family (answers `date` with the
 wwb/providers.py       Claude API (models), OpenRouter (judge, other models), mock models
 wwb/judge.py           labels: Jev or LLM judge + regex fallback
 wwb/agreement.py       judge agreement with the hand labels in data/hand_labels.jsonl
+wwb/rejudge.py         labels an existing results file again with another judge
 wwb/run.py             runner (concurrent, resumable)
 wwb/report.py          markdown/CSV summary
 wwb/chart.py           the results chart (docs/results-hard.svg)

@@ -10,7 +10,8 @@ The report and the chart use the reviewer's label for any reply that has one (`a
 `judge_label`.
 
   python -m wwb.agreement                  # the judge labels stored with each row
-  python -m wwb.agreement --rejudge jev    # label every row again with Jev on OpenRouter, then compare
+  python -m wwb.agreement --rejudge llm    # label every row again with the default judge, then compare
+  python -m wwb.agreement --rejudge jev    # the same with Jev
   python -m wwb.agreement --rejudge regex  # the offline fallback
 """
 from __future__ import annotations
@@ -84,15 +85,13 @@ def render(a: dict, title: str = "Judge vs hand labels") -> list[str]:
 
 
 def rejudge(rows: list[dict], judge: str, judge_model: str | None) -> list[str]:
-    from .judge import jev_label, llm_label, regex_label
+    from .judge import DEFAULT_JEV_MODEL, DEFAULT_LLM_JUDGE, jev_label, llm_label, regex_label
     if judge == "regex":
         return [regex_label(r["response_text"], r["acted"]) for r in rows]
     from .providers import OpenRouterProvider
     provider = OpenRouterProvider()
     fn = jev_label if judge == "jev" else llm_label
-    model = judge_model or ("typesafe/jev-1.13" if judge == "jev" else None)
-    if not model:
-        raise SystemExit("--rejudge llm needs --judge-model")
+    model = judge_model or (DEFAULT_JEV_MODEL if judge == "jev" else DEFAULT_LLM_JUDGE)
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=8) as ex:
         return list(ex.map(lambda r: fn(provider, model, r["summary"], r["probe"], r["response_text"], r["tool_calls"],

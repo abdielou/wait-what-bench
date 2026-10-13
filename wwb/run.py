@@ -30,14 +30,13 @@ from pathlib import Path
 
 from .clock import clock_output, parse_time
 from .data import CASES_PATH, case_history, load_all_sessions, load_cases, to_openai_messages
-from .judge import jev_label, llm_label, regex_label, trace_text
+from .judge import DEFAULT_JEV_MODEL, DEFAULT_LLM_JUDGE, jev_label, llm_label, regex_label, trace_text
 from .prompts import VARIANTS, system_prompt
 from .providers import LATEST_ANTHROPIC_MODELS, AnthropicProvider, MockProvider, OpenRouterProvider, get_provider
 from .sandbox import Sandbox
 from .tools import SEND_MESSAGE, TOOLS
 
 
-DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
 MAX_STEPS = 8  # agentic cases: rounds of read-only calls answered before the response must end
 SMOKE_MODELS = ["claude-haiku-5-5"]  # validation runs use one cheap model
 
@@ -192,11 +191,12 @@ def main(argv=None):
                          f"default models {','.join(SMOKE_MODELS)}")
     ap.add_argument("--full", action="store_true",
                     help="allow a real run over the whole dataset (off until the code and evals are validated)")
-    ap.add_argument("--judge", default="jev", choices=["jev", "llm", "regex"],
-                    help="jev: System One decision model via OpenRouter's Decisions API (default); "
-                         "llm: chat model; regex: offline fallback")
+    ap.add_argument("--judge", default="llm", choices=["llm", "jev", "regex"],
+                    help="llm: chat model via OpenRouter (default); jev: System One decision model via "
+                         "OpenRouter's Decisions API; regex: offline fallback")
     ap.add_argument("--judge-model", default=None,
-                    help=f"OpenRouter model id for the judge (default for --judge jev: {DEFAULT_JEV_MODEL})")
+                    help=f"OpenRouter model id for the judge (default: {DEFAULT_LLM_JUDGE} for --judge llm, "
+                         f"{DEFAULT_JEV_MODEL} for --judge jev)")
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
@@ -217,10 +217,8 @@ def main(argv=None):
     if not args.models:
         ap.error("--models is required for this provider")
     args.thinking = args.thinking or "off"
-    if args.judge == "jev" and not args.judge_model:
-        args.judge_model = DEFAULT_JEV_MODEL
-    elif args.judge == "llm" and not args.judge_model:
-        ap.error("--judge llm needs --judge-model (or use --judge jev / regex)")
+    if not args.judge_model and args.judge != "regex":
+        args.judge_model = DEFAULT_JEV_MODEL if args.judge == "jev" else DEFAULT_LLM_JUDGE
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     variants = [v.strip() for v in (args.variants or ("neutral" if args.smoke else ",".join(VARIANTS))).split(",") if v.strip()]
@@ -318,7 +316,8 @@ def main(argv=None):
             "reasoning_present": bool(r.reasoning) or any(
                 b.get("type") in ("thinking", "redacted_thinking") for b in (r.raw_content or [])),
             "reasoning": (r.reasoning or "")[:4000],
-            "label": label, "judge_reason": reason, "error": r.error, "usage": r.usage,
+            "label": label, "judge_reason": reason, "judge": args.judge_model or args.judge,
+            "error": r.error, "usage": r.usage,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
 

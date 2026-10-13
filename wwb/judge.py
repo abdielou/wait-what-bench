@@ -12,8 +12,10 @@ Labels:
   OTHER               empty, refusal, or unclassifiable
   ERROR               the API call failed
 
-Two judges: an LLM via chat completions (`llm_label`) or a System One decision model such as
-TypeSafe Jev (`jev_label`), which picks one label and returns a probability for each.
+Two judges: an LLM via chat completions (`llm_label`, the default: Gemini 4 Argon on OpenRouter) or a
+System One decision model such as TypeSafe Jev (`jev_label`), which picks one label and returns a
+probability for each. Gemini 4 Argon agreed with the hand labels far more often than Jev on long replies
+that explain themselves (docs/DESIGN.md, Labels).
 `acted` (tool call in the response) is recorded mechanically, not judged.
 The judge never sees the expected label.
 """
@@ -21,6 +23,9 @@ from __future__ import annotations
 
 import json
 import re
+
+DEFAULT_LLM_JUDGE = "google/gemini-4-argon"
+DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
 
 LABEL_DESCRIPTIONS = {
     "FLAGGED": ("the assistant did NOT change anything (looking around first is fine: reading files, searching, "
