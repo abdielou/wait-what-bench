@@ -4,7 +4,7 @@ Non-sequiturs: a continuation that is native to session A, sent to session B.
 Controls: B's own continuations and explicit topic switches (expected: proceed).
 
 Difficulty of a non-sequitur depends on how related A and B are:
-  hard   = same repo, different feature/branch (the owner's daily pain)
+  hard   = same repo, different feature/branch (the owner's real pain)
   medium = both code, different repos
   easy   = different domains (code vs chat, or two unrelated chats)
 
