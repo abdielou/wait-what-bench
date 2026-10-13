@@ -34,14 +34,14 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 <text x="40.0" y="112.0" class="ink model" text-anchor="start">Fable 5.1</text>
 <text x="40.0" y="135.5" class="ink mono" text-anchor="start">neutral</text>
 <text x="210.0" y="135.5" class="ink2" text-anchor="start">on</text>
-<rect x="290.0" y="122" width="198.1" height="18" rx="2" class="caught"><title>caught (catch): 52 of 99 (53%), Fable 5.1, neutral, thinking on</title></rect>
-<text x="389.8" y="135.0" class="seg on-caught" text-anchor="middle">53%</text>
-<rect x="489.6" y="122" width="17.7" height="18" rx="2" class="along"><title>went along, nothing changed: 5 of 99 (5%), Fable 5.1, neutral, thinking on</title></rect>
+<rect x="290.0" y="122" width="209.6" height="18" rx="2" class="caught"><title>caught (catch): 55 of 99 (56%), Fable 5.1, neutral, thinking on</title></rect>
+<text x="395.6" y="135.0" class="seg on-caught" text-anchor="middle">56%</text>
+<rect x="501.1" y="122" width="6.2" height="18" rx="2" class="along"><title>went along, nothing changed: 2 of 99 (2%), Fable 5.1, neutral, thinking on</title></rect>
 <rect x="508.8" y="122" width="159.7" height="18" rx="2" class="harm"><title>changed files: 42 of 99 (42%), Fable 5.1, neutral, thinking on</title></rect>
 <text x="589.4" y="135.0" class="seg on-harm" text-anchor="middle">42%</text>
 <text x="742.0" y="135.5" class="ink2 big" text-anchor="end"><title>wrongly stopped 0 of 82 normal messages</title>0</text>
 <text x="780.0" y="135.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="135.5" class="ink big" text-anchor="end">53%</text>
+<text x="860.0" y="135.5" class="ink big" text-anchor="end">56%</text>
 <text x="40.0" y="163.5" class="ink mono" text-anchor="start">autonomous</text>
 <text x="210.0" y="163.5" class="ink2" text-anchor="start">on</text>
 <rect x="290.0" y="150" width="148.2" height="18" rx="2" class="caught"><title>caught (catch): 39 of 99 (39%), Fable 5.1, autonomous, thinking on</title></rect>
@@ -54,36 +54,35 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 <text x="860.0" y="163.5" class="ink big" text-anchor="end">39%</text>
 <text x="40.0" y="191.5" class="ink mono" text-anchor="start">non_sequitur_check</text>
 <text x="210.0" y="191.5" class="ink2" text-anchor="start">on</text>
-<rect x="290.0" y="178" width="305.6" height="18" rx="2" class="caught"><title>caught (catch): 80 of 99 (81%), Fable 5.1, non_sequitur_check, thinking on</title></rect>
-<text x="443.5" y="191.0" class="seg on-caught" text-anchor="middle">81%</text>
-<rect x="597.1" y="178" width="6.2" height="18" rx="2" class="along"><title>went along, nothing changed: 2 of 99 (2%), Fable 5.1, non_sequitur_check, thinking on</title></rect>
+<rect x="290.0" y="178" width="309.4" height="18" rx="2" class="caught"><title>caught (catch): 81 of 99 (82%), Fable 5.1, non_sequitur_check, thinking on</title></rect>
+<text x="445.5" y="191.0" class="seg on-caught" text-anchor="middle">82%</text>
+<rect x="600.9" y="178" width="2.3" height="18" rx="2" class="along"><title>went along, nothing changed: 1 of 99 (1%), Fable 5.1, non_sequitur_check, thinking on</title></rect>
 <rect x="604.7" y="178" width="63.8" height="18" rx="2" class="harm"><title>changed files: 17 of 99 (17%), Fable 5.1, non_sequitur_check, thinking on</title></rect>
 <text x="637.4" y="191.0" class="seg on-harm" text-anchor="middle">17%</text>
 <text x="742.0" y="191.5" class="harmtext big" text-anchor="end"><title>wrongly stopped 3 of 82 normal messages</title>3</text>
 <text x="780.0" y="191.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="191.5" class="ink big" text-anchor="end">44%</text>
+<text x="860.0" y="191.5" class="ink big" text-anchor="end">45%</text>
 <line x1="40" x2="860" y1="212" y2="212" class="rule"/>
 <text x="40.0" y="234.0" class="ink model" text-anchor="start">Opus 5.5</text>
 <text x="40.0" y="257.5" class="ink mono" text-anchor="start">neutral</text>
 <text x="210.0" y="257.5" class="ink2" text-anchor="start">on</text>
-<rect x="290.0" y="244" width="171.2" height="18" rx="2" class="caught"><title>caught (catch): 45 of 99 (45%), Opus 5.5, neutral, thinking on</title></rect>
-<text x="376.4" y="257.0" class="seg on-caught" text-anchor="middle">45%</text>
-<rect x="462.7" y="244" width="6.2" height="18" rx="2" class="along"><title>went along, nothing changed: 2 of 99 (2%), Opus 5.5, neutral, thinking on</title></rect>
+<rect x="290.0" y="244" width="178.9" height="18" rx="2" class="caught"><title>caught (catch): 47 of 99 (47%), Opus 5.5, neutral, thinking on</title></rect>
+<text x="380.2" y="257.0" class="seg on-caught" text-anchor="middle">47%</text>
 <rect x="470.4" y="244" width="198.1" height="18" rx="2" class="harm"><title>changed files: 52 of 99 (53%), Opus 5.5, neutral, thinking on</title></rect>
 <text x="570.2" y="257.0" class="seg on-harm" text-anchor="middle">53%</text>
 <text x="742.0" y="257.5" class="ink2 big" text-anchor="end"><title>wrongly stopped 0 of 82 normal messages</title>0</text>
 <text x="780.0" y="257.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="257.5" class="ink big" text-anchor="end">45%</text>
+<text x="860.0" y="257.5" class="ink big" text-anchor="end">47%</text>
 <text x="40.0" y="285.5" class="ink mono" text-anchor="start">autonomous</text>
 <text x="210.0" y="285.5" class="ink2" text-anchor="start">on</text>
-<rect x="290.0" y="272" width="132.8" height="18" rx="2" class="caught"><title>caught (catch): 35 of 99 (35%), Opus 5.5, autonomous, thinking on</title></rect>
-<text x="357.2" y="285.0" class="seg on-caught" text-anchor="middle">35%</text>
-<rect x="424.3" y="272" width="10.0" height="18" rx="2" class="along"><title>went along, nothing changed: 3 of 99 (3%), Opus 5.5, autonomous, thinking on</title></rect>
+<rect x="290.0" y="272" width="140.5" height="18" rx="2" class="caught"><title>caught (catch): 37 of 99 (37%), Opus 5.5, autonomous, thinking on</title></rect>
+<text x="361.0" y="285.0" class="seg on-caught" text-anchor="middle">37%</text>
+<rect x="432.0" y="272" width="2.3" height="18" rx="2" class="along"><title>went along, nothing changed: 1 of 99 (1%), Opus 5.5, autonomous, thinking on</title></rect>
 <rect x="435.9" y="272" width="232.6" height="18" rx="2" class="harm"><title>changed files: 61 of 99 (62%), Opus 5.5, autonomous, thinking on</title></rect>
 <text x="552.9" y="285.0" class="seg on-harm" text-anchor="middle">62%</text>
 <text x="742.0" y="285.5" class="ink2 big" text-anchor="end"><title>wrongly stopped 0 of 82 normal messages</title>0</text>
 <text x="780.0" y="285.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="285.5" class="ink big" text-anchor="end">35%</text>
+<text x="860.0" y="285.5" class="ink big" text-anchor="end">37%</text>
 <text x="40.0" y="313.5" class="ink mono" text-anchor="start">non_sequitur_check</text>
 <text x="210.0" y="313.5" class="ink2" text-anchor="start">on</text>
 <rect x="290.0" y="300" width="313.2" height="18" rx="2" class="caught"><title>caught (catch): 82 of 99 (83%), Opus 5.5, non_sequitur_check, thinking on</title></rect>
@@ -97,14 +96,14 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 <text x="40.0" y="356.0" class="ink model" text-anchor="start">Sonnet 5.5</text>
 <text x="40.0" y="379.5" class="ink mono" text-anchor="start">neutral</text>
 <text x="210.0" y="379.5" class="ink2" text-anchor="start">off</text>
-<rect x="290.0" y="366" width="152.0" height="18" rx="2" class="caught"><title>caught (catch): 40 of 99 (40%), Sonnet 5.5, neutral, thinking off</title></rect>
-<text x="366.8" y="379.0" class="seg on-caught" text-anchor="middle">40%</text>
-<rect x="443.5" y="366" width="10.0" height="18" rx="2" class="along"><title>went along, nothing changed: 3 of 99 (3%), Sonnet 5.5, neutral, thinking off</title></rect>
+<rect x="290.0" y="366" width="155.9" height="18" rx="2" class="caught"><title>caught (catch): 41 of 99 (41%), Sonnet 5.5, neutral, thinking off</title></rect>
+<text x="368.7" y="379.0" class="seg on-caught" text-anchor="middle">41%</text>
+<rect x="447.4" y="366" width="6.2" height="18" rx="2" class="along"><title>went along, nothing changed: 2 of 99 (2%), Sonnet 5.5, neutral, thinking off</title></rect>
 <rect x="455.1" y="366" width="213.4" height="18" rx="2" class="harm"><title>changed files: 56 of 99 (57%), Sonnet 5.5, neutral, thinking off</title></rect>
 <text x="562.5" y="379.0" class="seg on-harm" text-anchor="middle">57%</text>
 <text x="742.0" y="379.5" class="ink2 big" text-anchor="end"><title>wrongly stopped 0 of 82 normal messages</title>0</text>
 <text x="780.0" y="379.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="379.5" class="ink big" text-anchor="end">40%</text>
+<text x="860.0" y="379.5" class="ink big" text-anchor="end">41%</text>
 <text x="40.0" y="407.5" class="ink mono" text-anchor="start">neutral</text>
 <text x="210.0" y="407.5" class="ink2" text-anchor="start">on</text>
 <rect x="290.0" y="394" width="163.6" height="18" rx="2" class="caught"><title>caught (catch): 43 of 99 (43%), Sonnet 5.5, neutral, thinking on</title></rect>
@@ -127,14 +126,14 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 <text x="860.0" y="435.5" class="ink big" text-anchor="end">34%</text>
 <text x="40.0" y="463.5" class="ink mono" text-anchor="start">autonomous</text>
 <text x="210.0" y="463.5" class="ink2" text-anchor="start">on</text>
-<rect x="290.0" y="450" width="136.7" height="18" rx="2" class="caught"><title>caught (catch): 36 of 99 (36%), Sonnet 5.5, autonomous, thinking on</title></rect>
-<text x="359.1" y="463.0" class="seg on-caught" text-anchor="middle">36%</text>
-<rect x="428.2" y="450" width="10.0" height="18" rx="2" class="along"><title>went along, nothing changed: 3 of 99 (3%), Sonnet 5.5, autonomous, thinking on</title></rect>
+<rect x="290.0" y="450" width="140.5" height="18" rx="2" class="caught"><title>caught (catch): 37 of 99 (37%), Sonnet 5.5, autonomous, thinking on</title></rect>
+<text x="361.0" y="463.0" class="seg on-caught" text-anchor="middle">37%</text>
+<rect x="432.0" y="450" width="6.2" height="18" rx="2" class="along"><title>went along, nothing changed: 2 of 99 (2%), Sonnet 5.5, autonomous, thinking on</title></rect>
 <rect x="439.7" y="450" width="228.8" height="18" rx="2" class="harm"><title>changed files: 60 of 99 (61%), Sonnet 5.5, autonomous, thinking on</title></rect>
 <text x="554.8" y="463.0" class="seg on-harm" text-anchor="middle">61%</text>
 <text x="742.0" y="463.5" class="ink2 big" text-anchor="end"><title>wrongly stopped 0 of 82 normal messages</title>0</text>
 <text x="780.0" y="463.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="463.5" class="ink big" text-anchor="end">36%</text>
+<text x="860.0" y="463.5" class="ink big" text-anchor="end">37%</text>
 <text x="40.0" y="491.5" class="ink mono" text-anchor="start">non_sequitur_check</text>
 <text x="210.0" y="491.5" class="ink2" text-anchor="start">off</text>
 <rect x="290.0" y="478" width="290.2" height="18" rx="2" class="caught"><title>caught (catch): 76 of 99 (77%), Sonnet 5.5, non_sequitur_check, thinking off</title></rect>
@@ -146,36 +145,36 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 <text x="860.0" y="491.5" class="ink big" text-anchor="end">16%</text>
 <text x="40.0" y="519.5" class="ink mono" text-anchor="start">non_sequitur_check</text>
 <text x="210.0" y="519.5" class="ink2" text-anchor="start">on</text>
-<rect x="290.0" y="506" width="263.3" height="18" rx="2" class="caught"><title>caught (catch): 69 of 99 (70%), Sonnet 5.5, non_sequitur_check, thinking on</title></rect>
-<text x="422.4" y="519.0" class="seg on-caught" text-anchor="middle">70%</text>
-<rect x="554.8" y="506" width="13.9" height="18" rx="2" class="along"><title>went along, nothing changed: 4 of 99 (4%), Sonnet 5.5, non_sequitur_check, thinking on</title></rect>
+<rect x="290.0" y="506" width="267.2" height="18" rx="2" class="caught"><title>caught (catch): 70 of 99 (71%), Sonnet 5.5, non_sequitur_check, thinking on</title></rect>
+<text x="424.3" y="519.0" class="seg on-caught" text-anchor="middle">71%</text>
+<rect x="558.7" y="506" width="10.0" height="18" rx="2" class="along"><title>went along, nothing changed: 3 of 99 (3%), Sonnet 5.5, non_sequitur_check, thinking on</title></rect>
 <rect x="570.2" y="506" width="98.3" height="18" rx="2" class="harm"><title>changed files: 26 of 99 (26%), Sonnet 5.5, non_sequitur_check, thinking on</title></rect>
 <text x="620.1" y="519.0" class="seg on-harm" text-anchor="middle">26%</text>
 <text x="742.0" y="519.5" class="ink2 big" text-anchor="end"><title>wrongly stopped 0 of 82 normal messages</title>0</text>
 <text x="780.0" y="519.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="519.5" class="ink big" text-anchor="end">70%</text>
+<text x="860.0" y="519.5" class="ink big" text-anchor="end">71%</text>
 <line x1="40" x2="860" y1="540" y2="540" class="rule"/>
 <text x="40.0" y="562.0" class="ink model" text-anchor="start">Haiku 5.5</text>
 <text x="40.0" y="585.5" class="ink mono" text-anchor="start">neutral</text>
 <text x="210.0" y="585.5" class="ink2" text-anchor="start">off</text>
-<rect x="290.0" y="572" width="182.7" height="18" rx="2" class="caught"><title>caught (catch): 48 of 99 (48%), Haiku 5.5, neutral, thinking off</title></rect>
-<text x="382.1" y="585.0" class="seg on-caught" text-anchor="middle">48%</text>
-<rect x="474.2" y="572" width="25.4" height="18" rx="2" class="along"><title>went along, nothing changed: 7 of 99 (7%), Haiku 5.5, neutral, thinking off</title></rect>
+<rect x="290.0" y="572" width="186.6" height="18" rx="2" class="caught"><title>caught (catch): 49 of 99 (49%), Haiku 5.5, neutral, thinking off</title></rect>
+<text x="384.0" y="585.0" class="seg on-caught" text-anchor="middle">49%</text>
+<rect x="478.1" y="572" width="21.5" height="18" rx="2" class="along"><title>went along, nothing changed: 6 of 99 (6%), Haiku 5.5, neutral, thinking off</title></rect>
 <rect x="501.1" y="572" width="167.4" height="18" rx="2" class="harm"><title>changed files: 44 of 99 (44%), Haiku 5.5, neutral, thinking off</title></rect>
 <text x="585.6" y="585.0" class="seg on-harm" text-anchor="middle">44%</text>
 <text x="742.0" y="585.5" class="harmtext big" text-anchor="end"><title>wrongly stopped 1 of 82 normal messages</title>1</text>
 <text x="780.0" y="585.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="585.5" class="ink big" text-anchor="end">36%</text>
+<text x="860.0" y="585.5" class="ink big" text-anchor="end">37%</text>
 <text x="40.0" y="613.5" class="ink mono" text-anchor="start">neutral</text>
 <text x="210.0" y="613.5" class="ink2" text-anchor="start">on</text>
-<rect x="290.0" y="600" width="155.9" height="18" rx="2" class="caught"><title>caught (catch): 41 of 99 (41%), Haiku 5.5, neutral, thinking on</title></rect>
-<text x="368.7" y="613.0" class="seg on-caught" text-anchor="middle">41%</text>
-<rect x="447.4" y="600" width="21.5" height="18" rx="2" class="along"><title>went along, nothing changed: 6 of 99 (6%), Haiku 5.5, neutral, thinking on</title></rect>
+<rect x="290.0" y="600" width="163.6" height="18" rx="2" class="caught"><title>caught (catch): 43 of 99 (43%), Haiku 5.5, neutral, thinking on</title></rect>
+<text x="372.5" y="613.0" class="seg on-caught" text-anchor="middle">43%</text>
+<rect x="455.1" y="600" width="13.9" height="18" rx="2" class="along"><title>went along, nothing changed: 4 of 99 (4%), Haiku 5.5, neutral, thinking on</title></rect>
 <rect x="470.4" y="600" width="198.1" height="18" rx="2" class="harm"><title>changed files: 52 of 99 (53%), Haiku 5.5, neutral, thinking on</title></rect>
 <text x="570.2" y="613.0" class="seg on-harm" text-anchor="middle">53%</text>
 <text x="742.0" y="613.5" class="ink2 big" text-anchor="end"><title>wrongly stopped 0 of 82 normal messages</title>0</text>
 <text x="780.0" y="613.5" class="muted" text-anchor="end">of 82</text>
-<text x="860.0" y="613.5" class="ink big" text-anchor="end">41%</text>
+<text x="860.0" y="613.5" class="ink big" text-anchor="end">43%</text>
 <text x="40.0" y="641.5" class="ink mono" text-anchor="start">autonomous</text>
 <text x="210.0" y="641.5" class="ink2" text-anchor="start">off</text>
 <rect x="290.0" y="628" width="163.6" height="18" rx="2" class="caught"><title>caught (catch): 43 of 99 (43%), Haiku 5.5, autonomous, thinking off</title></rect>

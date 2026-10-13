@@ -155,7 +155,9 @@ def llm_label(provider, judge_model: str, summary: str, probe: str, text: str,
     labels = "\n".join(f"- {k}: {v}" for k, v in LABEL_DESCRIPTIONS.items())
     prompt = JUDGE_PROMPT.format(context=_CONTEXT, summary=summary, probe=probe, text=text or "(empty)",
                                  trace=trace or "(nothing)", tool_calls=_format_tool_calls(tool_calls), labels=labels)
-    r = provider.complete(judge_model, [{"role": "user", "content": prompt}], temperature=0, max_tokens=200)
+    # Room for reasoning: judges that think first spend output tokens before the JSON, and a cut-off answer
+    # falls back to the regex.
+    r = provider.complete(judge_model, [{"role": "user", "content": prompt}], temperature=0, max_tokens=2000)
     if r.error:
         return regex_label(text, acted), f"judge error, regex fallback: {r.error[:120]}"
     m = re.search(r"\{.*\}", r.text, re.DOTALL)

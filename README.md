@@ -39,12 +39,12 @@ The prompts: `neutral` says nothing about asking or acting, `autonomous` is a ty
 
 **What it shows:**
 
-- On their own, the models catch 34 to 53% of these. The larger ones don't clearly beat Haiku.
+- On their own, the models catch 34 to 56% of these. Fable 5.1 does best (56% with the neutral prompt); Opus, Sonnet and Haiku are within noise of each other (41 to 49%).
 - Nearly every miss is a change: once a model doesn't catch it, it starts working.
-- The `autonomous` prompt lowers catch by 2 to 14 points for every model.
-- The explicit check raises catch to 68 to 83%, so the harness matters. But most settings then stop 3 to 6 of the 82 normal messages, which costs more than it gains at a 1-in-1,000 base rate. Sonnet 5.5 with thinking on is the exception: 70% caught and no false alarms.
+- The `autonomous` prompt lowers catch by 4 to 16 points for every model.
+- The explicit check raises catch to 68 to 83%, so the harness matters. But most settings then stop 3 to 6 of the 82 normal messages, which costs more than it gains at a 1-in-1,000 base rate. Sonnet 5.5 with thinking on is the exception: 71% caught and no false alarms.
 
-The dataset is small and synthetic and each case ran once, so differences under about 10 points are noise. Labels come from the judge, corrected by hand for 176 replies where it was unsure or said the model went along: it undercounted catches, by up to 9 points per row (see `docs/DESIGN.md`, Labels). Redraw the chart from any results file with `python -m wwb.chart results/*.jsonl` (`--markdown` prints the counts).
+The dataset is small and synthetic and each case ran once, so differences under about 10 points are noise. Labels come from the judge, with 202 replies corrected or confirmed by hand: every hard-tier miss it labeled went-along or rated unsure, every false alarm, and a random sample. The judge undercounted catches by up to 12 points per row (see `docs/DESIGN.md`, Labels). Redraw the chart from any results file with `python -m wwb.chart results/*.jsonl` (`--markdown` prints the counts).
 
 ## Metrics
 
