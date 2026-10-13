@@ -39,6 +39,9 @@ Optional, off by default: score every message with a model (--classify)
   python3 find_misfires.py --classify --sample 20       # try it on 20 random sessions first
   python3 find_misfires.py --classify --max-usd 5       # everything, stopping if it costs more than $5
 
+  The most suspicious messages go to suspects.md (with their context) and every score to scores.jsonl
+  (file and line, no text), to see where messages you know about ranked.
+
   Jev costs $0.042 per million input tokens on OpenRouter (output is free), so the estimate is the
   input it would send times that price. Misfires are rare, so most top-ranked messages will be fine:
   read the list, don't trust it.
@@ -57,16 +60,22 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 DEFAULT_PATTERNS = [
     r"\bwrong\s+(?:agent|session|window|tab|chat|thread|terminal|claude|convo|conversation|pane|instance|project|repo|"
     r"paste|prompt|message)\b",
-    r"\b(?:for|to)\s+(?:the\s+)?other\s+(?:agent|session|window|tab|chat|thread|terminal|claude|instance|project|repo)\b",
-    r"\b(?:not|wasn'?t|isn'?t|was\s+not|is\s+not)\s+(?:meant\s+)?for\s+you\b",
-    r"\bmeant\s+(?:it\s+|that\s+|this\s+)?for\s+(?:another|a\s+different|the\s+other)\b",
+    r"\b(?:was|were|is|it'?s|that'?s|meant|intended)\s+(?:(?!message|handoff|note|prompt|summary|update)\w+\s+){0,2}"
+    r"(?:for|to)\s+(?:the\s+)?other\s+"
+    r"(?:agent|session|window|tab|chat|thread|terminal|claude|instance|project|repo)\b",
+    r"\b(?:not|wasn'?t|isn'?t|was\s+not|is\s+not)\s+(?:meant\s+|intended\s+)?for\s+you\b",
+    r"\b(?:meant|intended)\s+(?:it\s+|that\s+|this\s+)?for\s+(?:another|a\s+different|the\s+other)\b",
     r"\b(?:sent|typed|pasted|put)\s+(?:that|this|it)\s+(?:in|into|to)\s+the\s+wrong\b",
+    r"\b(?:confused|mixed\s+up|mixing\s+up)\s+(?:\w+\s+){0,2}(?:sessions|agents|windows|tabs|chats|threads|"
+    r"terminals|conversations)\b",
+    r"\bwas\s+(?:meant\s+|intended\s+)?for\s+(?:someone|somebody)\s+else\b",
 ]
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit"}
 
@@ -90,7 +99,8 @@ _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n.*?^\s*\2\s*$", re.S | r
 
 # What the harness puts into user messages, as opposed to what you typed.
 _ARTIFACTS = re.compile(r"<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|"
-                        r"system-reminder|bash-input|bash-stdout|bash-stderr|task-notification)>.*?</\1>", re.S)
+                        r"system-reminder|bash-input|bash-stdout|bash-stderr|task-notification|ide_opened_file|"
+                        r"ide_selection|browser_instruction)>.*?</\1>", re.S)
 _INTERRUPT = "[Request interrupted by user"
 
 _SECRETS = [
@@ -300,9 +310,9 @@ KEY_HELP = ("Create a key (or raise its limit) at https://openrouter.ai/settings
             "this from. PowerShell: $env:OPENROUTER_API_KEY = \"sk-or-v1-...\"   bash: export OPENROUTER_API_KEY=sk-or-v1-...")
 QUESTION = {"fits": {
     "type": "choice",
-    "instructions": ("A developer runs several AI coding sessions at once and sometimes types a message into the "
-                     "wrong one. Given what this session is about and its last exchange, does the latest message "
-                     "the developer typed follow from this session?"),
+    "instructions": ("A developer runs several AI agent sessions at once (coding and other work) and sometimes "
+                     "types a message into the wrong one. Given what this session is about and its last exchange, "
+                     "does the latest message the developer typed follow from this session?"),
     "criteria": {
         "FOLLOWS": "it continues, answers or reacts to the session so far, or asks about the same work or project",
         "NEW_TOPIC": "it starts something new that plausibly belongs in this session or project, or says it is a new topic",
@@ -312,29 +322,63 @@ QUESTION = {"fits": {
 }}
 
 
+def assistant_text(line: dict) -> str:
+    """What the assistant said in a transcript line, including a plan or questions it put in a tool call."""
+    out = []
+    for b in blocks(line):
+        args = b.get("input") if isinstance(b.get("input"), dict) else {}
+        if b.get("type") == "text":
+            out.append(b.get("text", ""))
+        elif b.get("type") == "tool_use" and b.get("name") in ("ExitPlanMode", "AskUserQuestion"):
+            out.append(str(args.get("plan") or ""))
+            out += [str(q.get("question", "")) for q in args.get("questions") or [] if isinstance(q, dict)]
+    return " ".join(" ".join(out).split())
+
+
 def to_score(lines: list, project: str) -> list:
     """(line index, what Jev sees) for every message you typed after the first one in a session: the
-    session's first message, your previous message, the assistant's last reply and the message itself,
-    each shortened and with secrets redacted."""
-    task = prev = reply = None
-    out = []
+    session's first message, your previous message, what the assistant last said and the tools it ran
+    since your previous message, shortened and with secrets redacted. A transcript is a tree (editing or
+    retrying a message starts a new branch), so each message gets the context of its own branch."""
+    empty = {"task": None, "prev": None, "reply": None, "replied": False, "tools": ()}
+    states, last, out = {}, empty, []
     for i, line in enumerate(lines):
-        if isinstance(line, dict) and line.get("type") == "assistant" and not line.get("isSidechain"):
-            text = " ".join(b.get("text", "") for b in blocks(line) if b.get("type") == "text").strip()
-            reply = text or reply
+        if not isinstance(line, dict) or line.get("isSidechain") or line.get("type") not in (
+                "user", "assistant", "attachment", "system"):
             continue
-        text = typed_text(line)
-        if text is None or is_interrupt(line) or _CONTROL.match(text):
-            continue
-        if task is None:
-            task = text
+        # Older transcripts have no parentUuid: one line after another. A compaction starts a new chain,
+        # and logicalParentUuid links it to the old one.
+        parent = line.get("parentUuid") or line.get("logicalParentUuid")
+        st = states.get(parent, last) if parent else last
+        if line.get("type") == "assistant":
+            text = assistant_text(line)
+            tools = (st["tools"] + tuple(b.get("name", "?") for b in blocks(line) if b.get("type") == "tool_use"))[-200:]
+            st = {**st, "reply": text or st["reply"], "replied": st["replied"] or bool(text), "tools": tools}
         else:
-            out.append((i, redact({
-                "project": project, "branch": line.get("gitBranch") or "", "session_first_message": short(task, 800),
-                "previous_user_message": short(prev or "", 600), "assistant_last_reply": short(reply or "", 1200),
-                "latest_user_message": short(text, 1500)})))
-        prev, reply = text, None
+            text = typed_text(line)
+            if text is not None and not is_interrupt(line) and not _CONTROL.match(text):
+                if st["task"] is not None:
+                    tools = ", ".join(f"{n} x{k}" if k > 1 else n for n, k in Counter(st["tools"]).most_common(6))
+                    out.append((i, redact({
+                        "project": project, "branch": line.get("gitBranch") or "",
+                        "session_first_message": short(st["task"], 800),
+                        "previous_user_message": short(st["prev"] or "", 600),
+                        "assistant_last_reply": short(st["reply"] or "", 1200),
+                        "assistant_replied_since_previous_message": st["replied"],
+                        "assistant_tools_since_previous_message": tools or "none",
+                        "typed_while_assistant_was_working": mid_turn(line) is not None,
+                        "latest_user_message": short(text, 1500)})))
+                st = {**empty, "task": st["task"] or text, "prev": text, "reply": st["reply"]}
+        if line.get("uuid"):
+            states[line["uuid"]] = st
+        last = st
     return out
+
+
+def message_key(line: dict, text: str):
+    """The same message in a copy of a transcript (some apps copy ~/.claude into their own folder) has
+    the same uuid; older transcripts have none, so the time and text stand in."""
+    return line.get("uuid") or (line.get("timestamp"), text)
 
 
 def tokens(state: dict) -> float:
@@ -480,6 +524,11 @@ def classify(scoring: list, out: Path, args) -> list | None:
     after = key_usage(key)
     spent = None if before is None or after is None else after - before
     results.sort(key=lambda r: -r[0])
+    with open(out / "scores.jsonl", "w", encoding="utf-8") as f:
+        for score, choice, (path, i, state, did) in results:
+            f.write(json.dumps({"score": round(score, 3), "choice": choice, "project": state["project"],
+                                "file": str(path), "line": i, "mid_turn": state["typed_while_assistant_was_working"],
+                                "replied": state["assistant_replied_since_previous_message"]}) + "\n")
     top = []
     for score, choice, (path, i, state, did) in results[:args.top]:
         top.append({"score": round(score, 3), "choice": choice, "file": str(path), "line": i, **state, **did})
@@ -541,6 +590,7 @@ def main(argv=None) -> int:
     files = [path for r in roots for path in found[r]]
 
     scoring = []  # (path, line index, what Jev sees, what the assistant did before your next message)
+    seen = set()  # messages already found, by message_key
     if args.classify or args.estimate:
         pool = [f for f in files if not args.session or any(f.stem.startswith(x) for x in args.session)]
         if args.sample:
@@ -553,6 +603,10 @@ def main(argv=None) -> int:
             project = re.split(r"[\\/]", str(start or path.parent.name).rstrip("\\/"))[-1]
             states = to_score(lines, project)
             for k, (i, state) in enumerate(states):
+                key = message_key(lines[i], typed_text(lines[i]))
+                if key in seen:  # a copy of this transcript was already read
+                    continue
+                seen.add(key)
                 nxt = states[k + 1][0] if k + 1 < len(states) else len(lines)
                 did = what_happened(lines, i, nxt)
                 scoring.append((path, i, state, {"edited_files": len(did["edited_files"]),
@@ -579,6 +633,10 @@ def main(argv=None) -> int:
             continue
         lines = parse_lines(raw)
         for hit, prev, phrase in find_hits(lines, patterns):
+            key = ("hit", message_key(lines[hit], typed_text(lines[hit])))
+            if key in seen:
+                continue
+            seen.add(key)
             n += 1
             focus = prev if prev is not None else hit
             first = 0

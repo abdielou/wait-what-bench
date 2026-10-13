@@ -156,6 +156,73 @@ def test_counts_messages_typed_while_it_works_and_skips_notifications(tmp_path):
                    for _, s in states)
 
 
+def test_correction_phrases():
+    said = ["sorry, this wasn't intended for you", "I was confused between chat windows",
+            "oops, I mixed up my sessions", "ignore that, it was for somebody else",
+            "revert it, it was meant for the other session", "sorry, that's for the other window", "wrong window, ignore"]
+    asked = ["draft a note for the other window", "can you write handoff notes for the other session",
+             "this is a summary for the other session", "ask the other agent which port it uses"]
+    patterns = [fm.re.compile(p, fm.re.I) for p in fm.DEFAULT_PATTERNS]
+    assert [t for t in said if not any(p.search(t) for p in patterns)] == []
+    assert [t for t in asked if any(p.search(t) for p in patterns)] == []
+
+
+def test_skips_ide_and_browser_context():
+    assert fm.typed_text(line("user", "<browser_instruction># Claude in Chrome\nYou have tools.</browser_instruction>")) is None
+    ide = "<ide_opened_file>The user opened the file src/a.ts in the IDE.</ide_opened_file>fix the header"
+    assert fm.typed_text(line("user", ide)) == "fix the header"
+
+
+def test_to_score_follows_the_branch_and_marks_mid_turn_messages():
+    rows = []
+
+    def add(kind, content=None, parent=-1, **extra):
+        parent_uuid = rows[parent]["uuid"] if isinstance(parent, int) and rows else parent
+        rows.append(line(kind, content, uuid=f"u{len(rows)}", parentUuid=parent_uuid, **extra))
+        return len(rows) - 1
+    task = add("user", "add a CSV export to the admin orders page", parent=None)
+    asked = add("assistant", [{"type": "text", "text": "Which columns?"}])
+    add("user", "id and total")  # edited away
+    add("assistant", [{"type": "text", "text": "Exporting id and total."}])
+    edited = add("user", "id, total and date", parent=asked)
+    add("assistant", [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls src"}}])
+    add("user", [{"type": "tool_result", "tool_use_id": "t1", "content": "export.ts"}])
+    typed_while = add("attachment", attachment={"type": "queued_command", "commandMode": "prompt",
+                                                "prompt": "also add the customer email", "origin": {"kind": "human"}})
+    done = add("assistant", [{"type": "text", "text": "Added date and email."}])
+    add("system", subtype="compact_boundary", parent=None, logicalParentUuid=rows[done]["uuid"])
+    add("user", "Summary: a CSV export with id, total, date and email.", isCompactSummary=True)
+    after = add("user", "now make the tax rate 8% for NY")
+    states = dict(fm.to_score(rows, "shopfront"))
+    s = states[edited]
+    assert (s["previous_user_message"], s["assistant_last_reply"]) == ("add a CSV export to the admin orders page", "Which columns?")
+    s = states[typed_while]
+    assert s["typed_while_assistant_was_working"] and not s["assistant_replied_since_previous_message"]
+    assert (s["previous_user_message"], s["assistant_last_reply"]) == ("id, total and date", "Which columns?")
+    assert s["assistant_tools_since_previous_message"] == "Bash"
+    s = states[after]  # across the compaction
+    assert s["session_first_message"] == rows[task]["message"]["content"]
+    assert (s["previous_user_message"], s["assistant_last_reply"]) == ("also add the customer email", "Added date and email.")
+    assert not s["typed_while_assistant_was_working"] and s["assistant_tools_since_previous_message"] == "none"
+
+
+def test_a_copied_transcript_counts_once(tmp_path, capsys):
+    root = write_transcript(tmp_path)
+    copy = tmp_path / "AppData" / "app" / "claude-config" / "1" / "projects"
+    (copy / "-Users-me-code-shopfront").mkdir(parents=True)
+    for f in root.rglob("*.jsonl"):
+        (copy / "-Users-me-code-shopfront" / f.name).write_text(f.read_text())
+    assert fm.main(["--root", str(root), "--root", str(copy), "--out", str(tmp_path / "x"), "--estimate"]) == 0
+    assert "would send 2 messages from 1 sessions (2 transcripts)" in capsys.readouterr().out
+    project = tmp_path / "full" / "a"
+    project.mkdir(parents=True)
+    (project / f"{SESSION}.jsonl").write_text("\n".join(json.dumps(x) for x in transcript()) + "\n")
+    (tmp_path / "full" / "b").mkdir()
+    (tmp_path / "full" / "b" / f"{SESSION}.jsonl").write_text((project / f"{SESSION}.jsonl").read_text())
+    assert fm.main(["--root", str(tmp_path / "full"), "--out", str(tmp_path / "out")]) == 0
+    assert len(json.loads((tmp_path / "out" / "index.json").read_text())) == 1
+
+
 def test_changing_commands():
     changes = ["sed -i 's/a/b/' src/export.rs && grep -n b src/export.rs", "cargo fmt --all && cargo fmt --all --check",
                "git commit -am wip && git push", "cd build && rm -rf out", "echo hi > notes.txt", "npm install lodash",
@@ -218,6 +285,8 @@ def test_classify_ranks_messages_and_redacts_what_it_sends(tmp_path, monkeypatch
     assert top[0]["edited_files"] == 1  # the assistant edited tax.ts before the next message
     assert all("sk-or-v1-" not in json.dumps(s) for s in sent)  # secrets never leave
     assert "cost $0.01" in (out / "suspects.md").read_text()
+    scores = [json.loads(x) for x in (out / "scores.jsonl").read_text().splitlines()]
+    assert len(scores) == 2 and scores[0]["score"] == 0.91 and "tax rate" not in json.dumps(scores)  # no text
     with zipfile.ZipFile(tmp_path / "wwb-misfires.zip") as z:
         assert "wwb-misfires/suspects.md" in z.namelist()
 
