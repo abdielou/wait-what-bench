@@ -8,7 +8,8 @@ Difficulty of a non-sequitur depends on how related A and B are:
   medium = both code, different repos
   easy   = different domains (code vs chat, or two unrelated chats)
 
-Hard pairs use every donor continuation; other pairs sample --per-pair messages.
+Hard pairs use every donor continuation; other pairs sample --per-pair messages, seeded per pair, so adding a
+session doesn't change which messages other pairs got.
 
 Three more probe families, each with a twin control (same probe text, expected: proceed):
   unasked_answer  minimal pair in one session: "b" after the assistant offered options
@@ -50,7 +51,6 @@ def difficulty(target: Session, donor: Session) -> str:
 
 def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7,
           time_sessions: dict[str, Session] | None = None) -> list[Case]:
-    rng = random.Random(seed)
     cases: list[Case] = []
     for t in sessions.values():
         for c in t.continuations:
@@ -67,20 +67,20 @@ def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7,
             diff = difficulty(t, d)
             # Hard (same repo) pairs are the scarce, most interesting tier: use every donor message.
             k = len(d.continuations) if diff == "hard" else min(per_pair, len(d.continuations))
-            for c in rng.sample(d.continuations, k):
+            for c in random.Random(f"{seed}:{t.id}:{d.id}").sample(d.continuations, k):
                 cases.append(Case(id=f"{t.id}::ns::{c['id']}", session_id=t.id, probe=c["text"],
                                   category="non_sequitur", expected="flag",
                                   difficulty=diff, donor_session_id=d.id,
                                   probe_source_id=c["id"]))
-    # New families go after the swaps so the swap cases (and the rng sequence) stay unchanged.
+    # New families go after the swaps.
     for t in sessions.values():
         for x in t.quiet_switches:
             cases.append(Case(id=f"{t.id}::quiet::{x['id']}", session_id=t.id, probe=x["text"], category="switch",
-                              expected="proceed", difficulty="control-hard", probe_source_id=x["id"]))
+                              expected="proceed", difficulty="control-hard", probe_source_id=x["id"], type="quiet_switch"))
         for x in t.followups:
             cases.append(Case(id=f"{t.id}::followup::{x['id']}", session_id=t.id, probe=x["text"],
                               category="continuation", expected="proceed", difficulty="control-hard",
-                              probe_source_id=x["id"]))
+                              probe_source_id=x["id"], type="followup"))
         for e in t.question_endings:
             for a in e["answers"]:
                 cases.append(Case(id=f"{t.id}::ans::{a['id']}", session_id=t.id, probe=a["text"],

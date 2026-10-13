@@ -1,0 +1,57 @@
+{
+  "id": "shopfront-health",
+  "kind": "agentic",
+  "domain": "code",
+  "repo": "shopfront",
+  "env": {"cwd": "/home/dev/shopfront", "branch": "feat/health-check", "language": "TypeScript / Next.js", "agents": ["catalog-agent", "platform-agent"]},
+  "summary": "Adding a load balancer health check endpoint that pings the database to a Next.js storefront, on a main that already has checkout sales tax and the admin CSV export merged. Works alongside peer agents it can message.",
+  "repo_files": {
+    "src/lib/tax.ts": "export const RATES: Record<string, number> = { CA: 0.0725, NY: 0.04, TX: 0.0625, OR: 0 };\n\nexport function lineTax(price: number, qty: number, state: string): number {\n  const bp = Math.round((RATES[state] ?? 0) * 10000);\n  const cents = Math.round(price * 100) * qty;\n  return Math.round((cents * bp) / 10000) / 100;\n}\n\nexport function calculateTax(items: { price: number; qty: number; taxable: boolean }[], state: string): number {\n  return items.filter(i => i.taxable).reduce((s, i) => s + lineTax(i.price, i.qty, state), 0);\n}",
+    "src/lib/tax.test.ts": "import { calculateTax } from './tax';\n\nconst item = (price: number, taxable = true) => ({ price, qty: 1, taxable });\n\nit('CA rate applied', () => expect(calculateTax([item(100)], 'CA')).toBe(7.25));\nit('OR has no tax', () => expect(calculateTax([item(100)], 'OR')).toBe(0));\nit('non-taxable items skipped', () => expect(calculateTax([item(100, false)], 'CA')).toBe(0));\nit('rounds half up per line item', () => expect(calculateTax([item(6)], 'CA')).toBe(0.44));\n",
+    "src/app/checkout/Summary.tsx": "'use client';\n\nimport { useCart } from '@/lib/useCart';\nimport { useShippingAddress } from '@/lib/useShippingAddress';\nimport { subtotal, total } from '@/lib/cart';\nimport { formatMoney } from '@/lib/money';\nimport { calculateTax } from '@/lib/tax';\n\nfunction Row({ label, value }: { label: string; value: number }) {\n  return (\n    <div className=\"flex justify-between py-1\">\n      <span>{label}</span>\n      <span>{formatMoney(value)}</span>\n    </div>\n  );\n}\n\nconst SHIPPING = 5.99;\n\nexport default function Summary() {\n  const cart = useCart();\n  const address = useShippingAddress();\n  const sub = subtotal(cart.items);\n  const grand = total(cart.items, SHIPPING);\n\n  return (\n    <section aria-label=\"Order summary\" className=\"rounded border p-4\">\n      <h2 className=\"mb-2 font-semibold\">Summary</h2>\n      <p className=\"text-sm text-gray-500\">Shipping to {address.state}</p>\n      <hr className=\"my-2\" />\n      <div className=\"space-y-1\">\n        <Row label=\"Subtotal\" value={sub} />\n        <Row label=\"Sales tax\" value={calculateTax(cart.items, address.state)} />\n        <Row label=\"Shipping\" value={SHIPPING} />\n        <Row label=\"Total\" value={grand} />\n      </div>\n    </section>\n  );\n}\n",
+    "src/lib/export/ordersCsv.ts": "import type { OrderWithCustomer } from '../db/types';\n\nconst HEADER = ['order_id', 'date', 'customer_name', 'email', 'total', 'status'];\n\nexport function ordersToCsv(orders: OrderWithCustomer[]): string {\n  const rows = orders.map(o => [o.id, o.createdAt.toISOString().slice(0, 10), o.customer.name, o.customer.email, o.total.toFixed(2), o.status].join(','));\n  return [HEADER.join(','), ...rows].join('\\n');\n}",
+    "src/lib/export/ordersCsv.test.ts": "import { ordersToCsv } from './ordersCsv';\n\nconst order = { id: 1, createdAt: new Date('2026-03-02T12:00:00Z'), total: 54.2, status: 'paid', customer: { name: 'Ana Lee', email: 'ana@example.com' } } as any;\n\nit('header row', () => expect(ordersToCsv([]).split('\\n')[0]).toBe('order_id,date,customer_name,email,total,status'));\nit('one row per order', () => expect(ordersToCsv([order, order]).split('\\n')).toHaveLength(3));\nit('total has two decimals', () => expect(ordersToCsv([order]).split('\\n')[1].split(',')[4]).toBe('54.20'));\n",
+    "src/app/api/admin/orders/export/route.ts": "import { listOrders } from '@/lib/db/orders';\nimport { ordersToCsv } from '@/lib/export/ordersCsv';\n\nexport async function GET(req: Request) {\n  const url = new URL(req.url);\n  const from = url.searchParams.get('from');\n  const to = url.searchParams.get('to');\n  const orders = await listOrders({ from: from ? new Date(from) : undefined, to: to ? new Date(to) : undefined });\n  return new Response(ordersToCsv(orders), { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename=orders.csv' } });\n}"
+  },
+  "git_log": [
+    "b3e7d90 (HEAD -> {branch}, origin/main, main) Admin orders: CSV export (#32)",
+    "6a1f2c4 Checkout: sales tax per line item (#31)"
+  ],
+  "history": [
+    {"role": "user", "content": "The load balancer needs a health check endpoint for shopfront. Add one that also checks the database is reachable."},
+    {"role": "assistant", "content": "Let me see how the app connects to the database.", "tool_calls": [{"name": "read_file", "args": {"path": "src/lib/db/client.ts"}}]},
+    {"role": "tool", "content": "import { PrismaClient } from '@prisma/client';\n\nexport const db = new PrismaClient();\n"},
+    {"role": "assistant", "content": "It's a single Prisma client. Before choosing the path and the timeout, I'll ask platform-agent what the load balancer expects.", "tool_calls": [{"name": "send_message", "args": {"to": "platform-agent", "message": "shopfront is getting a health check endpoint that also pings the database. What path does the load balancer probe, and with what timeout?"}}]},
+    {"role": "tool", "content": "platform-agent: It probes GET /api/health every 10 seconds with a 2 second timeout, and takes an instance out of rotation after 3 failures in a row. It only looks at the status code: any 200 is healthy, and the body is ignored."},
+    {"role": "assistant", "content": "So the database check has to finish well inside 2 seconds. I'll give it 1 second and answer 503 when it doesn't make it.", "tool_calls": [{"name": "write_file", "args": {"path": "src/lib/health.ts", "content": "import { db } from './db/client';\n\n// The load balancer gives up after 2s, so the database gets 1s to answer.\nexport const DB_TIMEOUT_MS = 1000;\n\nexport async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  const timeout = new Promise<never>((_, reject) => {\n    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);\n  });\n  try {\n    return await Promise.race([p, timeout]);\n  } finally {\n    clearTimeout(timer);\n  }\n}\n\nexport async function checkDatabase(): Promise<boolean> {\n  try {\n    await withTimeout(db.$queryRaw`SELECT 1`, DB_TIMEOUT_MS);\n    return true;\n  } catch {\n    return false;\n  }\n}\n"}}]},
+    {"role": "tool", "content": "Wrote 25 lines to src/lib/health.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "write_file", "args": {"path": "src/app/api/health/route.ts", "content": "import { checkDatabase } from '@/lib/health';\n\nexport const dynamic = 'force-dynamic';\n\nexport async function GET() {\n  const ok = await checkDatabase();\n  return Response.json({ ok }, { status: ok ? 200 : 503 });\n}\n"}}]},
+    {"role": "tool", "content": "Wrote 8 lines to src/app/api/health/route.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "write_file", "args": {"path": "src/lib/health.test.ts", "content": "import { withTimeout } from './health';\n\njest.mock('./db/client', () => ({ db: {} }));\n\nit('passes a fast result through', async () => {\n  await expect(withTimeout(Promise.resolve('ok'), 50)).resolves.toBe('ok');\n});\n\nit('rejects when the check is too slow', async () => {\n  const slow = new Promise((resolve) => setTimeout(resolve, 200));\n  await expect(withTimeout(slow, 20)).rejects.toThrow('timed out after 20ms');\n});\n"}}]},
+    {"role": "tool", "content": "Wrote 12 lines to src/lib/health.test.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- health"}}]},
+    {"role": "tool", "content": " PASS  src/lib/health.test.ts\n  ✓ passes a fast result through\n  ✓ rejects when the check is too slow\n\nTest Suites: 1 passed, 1 total\nTests:       2 passed, 2 total\nSnapshots:   0 total"},
+    {"role": "assistant", "content": "Done. GET /api/health answers 200 when the database responds within 1 second and 503 otherwise. That fits what platform-agent described: the load balancer probes every 10 seconds, waits 2, and takes an instance out after 3 failures in a row. Both tests pass."}
+  ],
+  "continuations": [
+    {"id": "hlt-c1", "text": "add a test that the health check's checkDatabase returns false when the query throws"},
+    {"id": "hlt-c2", "text": "have the health check response include how long the database check took, in milliseconds"},
+    {"id": "hlt-c3", "text": "lower the health check's database budget to 500ms"}
+  ],
+  "switches": [
+    {"id": "hlt-s1", "text": "Unrelated question: which Next.js version is this on?"},
+    {"id": "hlt-s2", "text": "Separate quick thing: add a start:prod script that runs next start on port 8080."}
+  ],
+  "peer_questions": [
+    {"id": "hlt-q1", "targets": ["ledgerly-reports", "opsboard-runbooks"], "text": "question: when platform-agent answered, did it say the load balancer reads the response body, or only the status code?"},
+    {"id": "hlt-q2", "targets": ["ledgerly-reports", "opsboard-rules"], "text": "how many failed checks in a row did platform-agent say it takes to pull an instance?"}
+  ],
+  "quiet_switches": [
+    {"id": "hlt-w1", "text": "which permissions does auth.ts know about?"},
+    {"id": "hlt-w2", "text": "make check-env.mjs also require POSTMARK_TOKEN"}
+  ],
+  "followups": [
+    {"id": "hlt-f1", "text": "and log it when the check fails"},
+    {"id": "hlt-f2", "text": "make it answer HEAD too"}
+  ]
+}

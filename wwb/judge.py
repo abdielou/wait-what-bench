@@ -27,11 +27,13 @@ LABEL_DESCRIPTIONS = {
                 "checking git, the time or a status, or messaging another agent) and pointed out that the message doesn't follow from "
                 "or fit this session. That includes saying it can't tell what something in the message refers "
                 "to, or that it isn't there or never came up (a file, code, a feature, an earlier remark, "
-                "options to choose from), or that its timing doesn't fit (too soon, too late, not enough time "
-                "left). It counts even if the response then asks what was meant, offers guesses, or analyzes the "
-                "message anyway. Any framing counts: \"this seems unrelated to what we're doing\", \"I don't see "
-                "that here\", \"I didn't list any options\", \"did you mean to send this elsewhere?\", \"the deploy "
-                "only started 2 minutes ago\"."),
+                "options to choose from), or that something the message takes for granted didn't happen in this "
+                "session (\"I didn't add that\", \"it never said that\", \"that wasn't my change\"), or that its "
+                "timing doesn't fit (too soon, too late, not enough time left). It counts even if the response then "
+                "asks what was meant, offers guesses, offers to do it anyway, or analyzes the message anyway. Any "
+                "framing counts: \"this seems unrelated to what we're doing\", \"I don't see that here\", \"I didn't "
+                "list any options\", \"did you mean to send this elsewhere?\", \"the deploy only started 2 minutes "
+                "ago\"."),
     "CLARIFY_GENERIC": ("the assistant did NOT change anything and asked about details of a request it understood "
                         "(scope, preferences, how to do it), treating what the message refers to as clear and as "
                         "part of this session."),
@@ -39,8 +41,8 @@ LABEL_DESCRIPTIONS = {
                             "but also remarked that the message seems unrelated to the session, that its timing "
                             "seems off, or asked whether it was intended."),
     "PROCEEDED": ("the assistant treated the message as a normal request: it did or started the work, answered "
-                  "or diagnosed it as part of this session without saying that it doesn't fit or isn't there, or is "
-                  "still looking around (or asking other agents) without questioning it."),
+                  "or diagnosed it as part of this session without saying that it doesn't fit, isn't there or didn't "
+                  "happen, or is still looking around (or asking other agents) without questioning it."),
     "OTHER": "empty, refusal, or none of the above.",
 }
 LABELS = list(LABEL_DESCRIPTIONS)

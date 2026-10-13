@@ -49,6 +49,20 @@
    "src/web/openInEditor.ts",
    "src/web/panels/Runbooks.tsx",
    "src/web/App.tsx"
+  ],
+  "9d3f1a2": [
+   "src/server/alerts.test.ts",
+   "src/server/alerts.ts",
+   "src/server/index.ts",
+   "src/web/api.ts",
+   "src/web/panels/AlertRules.tsx"
+  ],
+  "4c8b2e7": [
+   "src/server/incidents.test.ts",
+   "src/server/incidents.ts",
+   "src/server/index.ts",
+   "src/web/api.ts",
+   "src/web/panels/Incidents.tsx"
   ]
  },
  "files": {
@@ -75,5 +89,11 @@
   "src/web/panels/Incidents.tsx": "import { useEffect, useState } from 'react';\nimport { getIncidents } from '../api';\nimport type { Incident } from '../../server/incidents';\n\nexport function Incidents() {\n  const [incidents, setIncidents] = useState<Incident[]>([]);\n  useEffect(() => {\n    getIncidents().then(setIncidents);\n  }, []);\n  return (\n    <section>\n      <h2>Incidents</h2>\n      <table>\n        <thead>\n          <tr><th>Opened</th><th>Title</th><th>Rule</th><th>Status</th></tr>\n        </thead>\n        <tbody>\n          {incidents.map((i) => (\n            <tr key={i.id}>\n              <td>{new Date(i.openedAt).toLocaleString()}</td>\n              <td>{i.title}</td>\n              <td><code>{i.ruleId}</code></td>\n              <td>{i.status}</td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n    </section>\n  );\n}\n",
   "src/web/panels/AlertRules.tsx": "import { useEffect, useState } from 'react';\nimport { getRules } from '../api';\nimport type { Rule } from '../../server/alerts';\n\nexport function AlertRules() {\n  const [rules, setRules] = useState<Rule[]>([]);\n  useEffect(() => {\n    getRules().then(setRules);\n  }, []);\n  return (\n    <section>\n      <h2>Alert rules</h2>\n      <table>\n        <thead>\n          <tr><th>Rule</th><th>Condition</th><th>Severity</th></tr>\n        </thead>\n        <tbody>\n          {rules.map((r) => (\n            <tr key={r.id}>\n              <td>{r.name} <span className=\"chip\">{r.id}</span></td>\n              <td><code>{r.metric} {r.op} {r.threshold}</code> for {r.for}</td>\n              <td>{r.severity}</td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n    </section>\n  );\n}\n",
   "src/web/panels/Runbooks.tsx": "import { openInEditor } from '../openInEditor';\n\nconst RUNBOOKS = ['runbooks/api-errors.md', 'runbooks/queue-backlog.md', 'runbooks/disk-free.md'];\n\nexport function Runbooks() {\n  return (\n    <section>\n      <h2>Runbooks</h2>\n      <ul>\n        {RUNBOOKS.map((p) => (\n          <li key={p}>\n            {p} <button onClick={() => openInEditor(p)}>Open</button>\n          </li>\n        ))}\n      </ul>\n    </section>\n  );\n}\n"
+ },
+ "commit_versions": {
+  "9d3f1a2": {
+   "src/server/index.ts": "import express from 'express';\nimport { listIncidents } from './incidents';\nimport { loadRules, saveRules } from './alerts';\n\nconst app = express();\napp.use(express.json());\n\napp.get('/api/incidents', async (_req, res) => {\n  res.json(await listIncidents());\n});\n\napp.get('/api/alerts', async (_req, res) => {\n  res.json(await loadRules());\n});\n\napp.put('/api/alerts', async (req, res) => {\n  try {\n    await saveRules(req.body);\n    res.sendStatus(204);\n  } catch (e) {\n    res.status(400).send(e instanceof Error ? e.message : String(e));\n  }\n});\n\napp.listen(4000, () => console.log('opsboard api on :4000'));\n",
+   "src/web/api.ts": "import type { Incident } from '../server/incidents';\nimport type { Rule } from '../server/alerts';\n\nexport async function getIncidents(): Promise<Incident[]> {\n  return (await fetch('/api/incidents')).json();\n}\n\nexport async function getRules(): Promise<Rule[]> {\n  return (await fetch('/api/alerts')).json();\n}\n\nexport async function saveRules(rules: Rule[]): Promise<void> {\n  const r = await fetch('/api/alerts', {\n    method: 'PUT',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(rules),\n  });\n  if (!r.ok) throw new Error(await r.text());\n}\n"
+  }
  }
 }

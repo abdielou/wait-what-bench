@@ -35,5 +35,48 @@
   "src/emails/OrderConfirmation.tsx": "import { formatMoney } from '@/lib/money';\n\nexport function OrderConfirmation({ subtotal, shipping, total }: { subtotal: number; shipping: number; total: number }) {\n  return (\n    <table>\n      <tbody>\n        <tr><td>Subtotal</td><td>{formatMoney(subtotal)}</td></tr>\n        <tr><td>Shipping</td><td>{formatMoney(shipping)}</td></tr>\n        <tr><td>Total</td><td>{formatMoney(total)}</td></tr>\n      </tbody>\n    </table>\n  );\n}\n",
   "src/lib/email/sendOrderConfirmation.ts": "import { renderToStaticMarkup } from 'react-dom/server';\nimport { OrderConfirmation } from '@/emails/OrderConfirmation';\n\nexport async function sendOrderConfirmation(to: string, amounts: { subtotal: number; shipping: number; total: number }) {\n  const html = renderToStaticMarkup(OrderConfirmation(amounts));\n  await fetch('https://api.postmarkapp.com/email', {\n    method: 'POST',\n    headers: { 'X-Postmark-Server-Token': process.env.POSTMARK_TOKEN ?? '', 'Content-Type': 'application/json' },\n    body: JSON.stringify({ From: 'orders@pantry.shop', To: to, Subject: 'Your order', HtmlBody: html }),\n  });\n}\n",
   "src/app/api/orders/route.ts": "import { db } from '@/lib/db/client';\nimport { subtotal, total, type CartItem } from '@/lib/cart';\nimport { sendOrderConfirmation } from '@/lib/email/sendOrderConfirmation';\n\nconst SHIPPING = 5.99;\n\nexport async function POST(req: Request) {\n  const { items, email, shippingState }: { items: CartItem[]; email: string; shippingState: string } = await req.json();\n  const amounts = { subtotal: subtotal(items), shipping: SHIPPING, total: total(items, SHIPPING) };\n  const order = await db.order.create({ data: { ...amounts, status: 'paid', shippingState } });\n  await sendOrderConfirmation(email, amounts);\n  return Response.json({ id: order.id });\n}\n"
+ },
+ "commit_files": {
+  "0c7e44d": [
+   ".eslintrc.json",
+   ".gitignore",
+   "README.md",
+   "jest.config.js",
+   "package.json",
+   "tsconfig.json",
+   "scripts/check-env.mjs",
+   "src/lib/auth.ts",
+   "src/lib/cart.ts",
+   "src/lib/cart.test.ts",
+   "src/lib/money.ts",
+   "src/lib/useCart.ts"
+  ],
+  "4b7d2aa": [
+   "prisma/schema.prisma",
+   "src/lib/db/client.ts",
+   "src/lib/db/orders.ts",
+   "src/lib/db/types.ts",
+   "src/app/api/orders/route.ts",
+   "src/emails/OrderConfirmation.tsx",
+   "src/lib/email/sendOrderConfirmation.ts"
+  ],
+  "91ab3f0": [
+   "src/app/checkout/Summary.tsx",
+   "src/app/checkout/page.tsx",
+   "src/lib/useShippingAddress.ts"
+  ],
+  "e5d2c81": [
+   "src/app/admin/orders/page.tsx"
+  ],
+  "6a1f2c4": [
+   "src/lib/tax.ts",
+   "src/lib/tax.test.ts",
+   "src/app/checkout/Summary.tsx"
+  ],
+  "b3e7d90": [
+   "src/lib/export/ordersCsv.ts",
+   "src/lib/export/ordersCsv.test.ts",
+   "src/app/api/admin/orders/export/route.ts"
+  ]
  }
 }

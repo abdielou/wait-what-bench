@@ -19,8 +19,9 @@ tool call is classified:
 
 Inline code (`python -c`, `node -e`) can't be simulated either, but models use it to inspect
 things, so it gets "permission denied" (as in a harness that requires approval) and the model
-carries on. Shell scripts (`sh -c`, `for` loops, `xargs`) are run command by command. Database
-clients can't connect, as on a laptop without the database running.
+carries on. So does writing a scratch file outside the repository, which changes nothing in it.
+Shell scripts (`sh -c`, `for` loops, `xargs`) are run command by command. Database clients can't
+connect, as on a laptop without the database running.
 
 Outputs depend only on the session and the hidden time, so the two cases of a time pair see
 identical answers except from the clock and the time-dependent status commands.
@@ -61,7 +62,7 @@ class Result:
     output: str = ""
     clock: bool = False  # read the clock
     state: bool = False  # read a declared status command
-    denied: bool = False  # inline code was refused (the model sees "permission denied" and continues)
+    denied: bool = False  # inline code or a write outside the repo was refused ("permission denied"); it continues
 
 
 class Action(Exception):
@@ -445,6 +446,8 @@ class Sandbox:
         self.touched = {k: {_norm(x) for x in v} for k, v in repo.get("commit_files", {}).items()}
         if self.own_commits == 1:
             self.touched[self.commits[0][0]] = set(self.branch_files)
+        # A file as some commit left it, when a later commit changed it again ("commit_versions").
+        self.versions = {k: {_norm(x): t for x, t in v.items()} for k, v in repo.get("commit_versions", {}).items()}
         self.test_runs: dict[tuple, str] = {}
         self.env = {"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev", "SHELL": "/bin/bash", "PWD": self.root,
                     "LANG": "C.UTF-8", "TERM": "xterm-256color", "PATH": "/usr/local/bin:/usr/bin:/bin"}
@@ -553,6 +556,10 @@ class Sandbox:
         if name == "send_message":
             return Result("message", f"Message sent to {args.get('to') or 'the agent'}. No reply yet.")
         if name in ("write_file", "edit_file"):
+            path = str(args.get("path", ""))
+            if path and self._resolve(path, "") is None:  # a scratch file outside the repo changes nothing in it
+                return Result("read", f"Error: permission denied: writing outside the repository ({path}) isn't "
+                                      "allowed in this workspace", denied=True)
             return Result("action")
         if name == "read_file":
             return Result("read", _cap(self._read_file(str(args.get("path", "")))))
@@ -682,6 +689,9 @@ class Sandbox:
                     quiet_out = quiet_out or fd in ("", "1", "&")
                     quiet_err = quiet_err or fd in ("2", "&")
                     continue
+                if self._resolve(target, cwd) is None:  # a scratch file outside the repo: refused, like write_file
+                    self._denied = True
+                    return "", 1, cwd, f"bash: {target}: Permission denied"
                 raise Action("writes a file")
             m = None if quoted else re.fullmatch(r"<(.*)", t)
             if m:
@@ -1112,6 +1122,7 @@ class Sandbox:
         o = {"r": prog == "rg", "n": prog == "rg", "i": False, "l": False, "c": False, "v": False, "w": False,
              "F": prog == "fgrep", "E": prog in ("egrep", "rg"), "h": False, "H": False, "o": False, "q": False}
         patterns, includes, rest, k = [], [], [], 1
+        after = before = max_count = 0
         longs = {"recursive": "r", "line-number": "n", "ignore-case": "i", "files-with-matches": "l", "count": "c",
                  "invert-match": "v", "word-regexp": "w", "fixed-strings": "F", "extended-regexp": "E",
                  "perl-regexp": "E", "no-filename": "h", "with-filename": "H", "only-matching": "o", "quiet": "q"}
@@ -1131,18 +1142,36 @@ class Sandbox:
                         patterns.append(val)
                     else:
                         includes.append(f"*.{val}" if key == "type" else val)
-                elif key in ("max-count", "context", "after-context", "before-context", "exclude-dir", "exclude") and not eq:
-                    k += 1
+                elif key in ("max-count", "context", "after-context", "before-context", "exclude-dir", "exclude"):
+                    if not eq:
+                        val, k = (argv[k + 1] if k + 1 < len(argv) else ""), k + 1
+                    n = int(val) if val.isdigit() else 0
+                    if key in ("context", "after-context"):
+                        after = n
+                    if key in ("context", "before-context"):
+                        before = n
+                    if key == "max-count":
+                        max_count = n
                 k += 1
                 continue
             if a.startswith("-") and len(a) > 1:
                 j = 1
                 while j < len(a):
                     f = a[j]
+                    if f.isdigit():  # -3 is -C 3
+                        after = before = int(re.match(r"\d+", a[j:]).group(0))
+                        break
                     if f in "eABCmgtd":
                         val = a[j + 1:] or (argv[k + 1] if k + 1 < len(argv) else "")
                         if not a[j + 1:]:
                             k += 1
+                        n = int(val) if val.isdigit() else 0
+                        if f in "AC":
+                            after = n
+                        if f in "BC":
+                            before = n
+                        if f == "m":
+                            max_count = n
                         if f == "e":
                             patterns.append(val)
                         elif f == "g":
@@ -1188,8 +1217,10 @@ class Sandbox:
         show_names = (show_names or len(targets) > 1) and not o["h"]
         out, matched = [], False
         for name, content in targets:
-            hits = [(i, line) for i, line in enumerate(content.rstrip("\n").split("\n"), 1)
-                    if any(rx.search(line) for rx in rxs) != o["v"]]
+            lines = content.rstrip("\n").split("\n")
+            hits = [(i, line) for i, line in enumerate(lines, 1) if any(rx.search(line) for rx in rxs) != o["v"]]
+            if max_count:
+                hits = hits[:max_count]
             if not hits:
                 if o["c"]:
                     out.append(f"{name}:0" if show_names and name else "0")
@@ -1199,6 +1230,14 @@ class Sandbox:
                 out.append(name or "(standard input)")
             elif o["c"]:
                 out.append(f"{name}:{len(hits)}" if show_names and name else str(len(hits)))
+            elif (after or before) and not o["o"]:  # context lines use "-", groups are separated by "--"
+                hit_nos = {i for i, _ in hits}
+                shown = sorted({j for i in hit_nos for j in range(max(1, i - before), min(len(lines), i + after) + 1)})
+                for j in shown:
+                    if out and (j - 1 not in shown or j == shown[0]):
+                        out.append("--")
+                    sep = ":" if j in hit_nos else "-"
+                    out.append((f"{name}{sep}" if show_names and name else "") + (f"{j}{sep}" if o["n"] else "") + lines[j - 1])
             else:
                 for i, line in hits:
                     pieces = [m.group(0) for rx in rxs for m in rx.finditer(line)] if o["o"] else [line]
@@ -1343,14 +1382,31 @@ class Sandbox:
                 if text is None:
                     return "", 128, f"fatal: path '{path}' does not exist in '{rev or 'HEAD'}'"
                 return text, 0, ""
-            revs = [a for a in rest if not a.startswith("-")] or ["HEAD"]
+            dashdash = rest.index("--") if "--" in rest else len(rest)
+            args = [a for a in rest[:dashdash] if not a.startswith("-")]
+            revs = [a for a in args if self._commit(a) is not None] or (["HEAD"] if len(args) < 2 or dashdash < len(rest) else [])
+            paths = [p for p in (self._resolve(a, cwd) for a in [*(a for a in args if a not in revs), *rest[dashdash + 1:]])
+                     if p is not None]
+            bad = [a for a in args if a not in revs and not self._exists(self._resolve(a, cwd))]
+            if bad or not revs:
+                return "", 128, f"fatal: bad object {(bad or args)[0]}"
             found = [self._commit(r) for r in revs]
-            if None in found:
-                return "", 128, f"fatal: bad object {revs[found.index(None)]}"
             entries = []
             for c in found:
-                files = sorted(self.touched.get(c[0], ()))
+                files = sorted(f for f in self.touched.get(c[0], ()) if self._under_any(f, paths))
                 entry = self._log_entry(c)
+                patch = not any(a in rest for a in ("--stat", "--name-only", "--name-status", "-s", "--no-patch",
+                                                    "--quiet", "--shortstat", "--numstat", "--oneline"))
+                if files and patch:
+                    i = self.commits.index(c)
+                    for f in files:
+                        a = self._version_at(f, i + 1) if i + 1 < len(self.commits) else None
+                        b = self._version_at(f, i)
+                        if a == b:
+                            continue
+                        d = list(difflib.unified_diff((a or "").splitlines(), (b or "").splitlines(), lineterm="", n=3))[2:]
+                        entry += "\n\n" + "\n".join([f"diff --git a/{f} b/{f}"] + (["new file mode 100644"] if a is None else [])
+                                                     + [f"--- {'/dev/null' if a is None else 'a/' + f}", f"+++ b/{f}"] + d)
                 if files and any(a in rest for a in ("--stat", "--name-only", "--name-status")):
                     i = self.commits.index(c)
                     before = [self._version_at(f, i + 1) if i + 1 < len(self.commits) else None for f in files]
@@ -1371,6 +1427,8 @@ class Sandbox:
                                   f"{sum(a for a, _ in counts)} insertions(+), {sum(r for _, r in counts)} deletions(-)")
                 entries.append(entry)
             return "\n\n".join(entries), 0, ""
+        if sub == "blame":
+            return self._git_blame(rest, cwd)
         if sub == "branch":
             listing = [a for a in rest if a.split("=")[0] in ("--contains", "--no-contains", "--merged", "--no-merged",
                                                               "--points-at", "--list", "-l", "--format", "--sort")]
@@ -1476,11 +1534,79 @@ class Sandbox:
             known = [k for k, c in enumerate(self.commits) if p in self.touched.get(c[0], ())]
             if known and i > max(known):
                 return None
+            last = next((k for k in known if k >= i), None)  # the newest commit at or before i that touched it
+            if last is not None:
+                if p in self.versions.get(self.commits[last][0], {}):
+                    return self.versions[self.commits[last][0]][p]
+                if last >= self.own_commits and p in self.branch_files:  # only a later own commit changed it
+                    return self.base_files.get(p)
         if i >= self.own_commits and p in self.branch_files:
             return self.base_files.get(p)
         if p in self.originals:
             return self.originals[p]
         return self.files[p] if p in self.tracked and p in self.files else None
+
+    def _git_blame(self, rest: list[str], cwd: str):
+        """Each line with the commit that last changed it, from the versions each commit left; lines this
+        session changed are "Not Committed Yet"."""
+        if any(a in rest for a in ("-p", "--porcelain", "--line-porcelain", "--incremental")):
+            raise Unsupported("git blame --porcelain")
+        span, names, k = None, [], 0
+        while k < len(rest):
+            a = rest[k]
+            if a.startswith("-L"):
+                spec = a[2:] or (rest[k + 1] if k + 1 < len(rest) else "")
+                k += 0 if a[2:] else 1
+                m = re.fullmatch(r"(\d+)(?:,(\+?)(\d+))?", spec)
+                if not m:
+                    raise Unsupported("git blame -L with a pattern")
+                lo = int(m.group(1))
+                hi = lo + int(m.group(3)) - 1 if m.group(2) else int(m.group(3) or lo)
+                span = (lo, hi)
+            elif a != "--" and not a.startswith("-"):
+                names.append(a)
+            k += 1
+        rev = next((a for a in names if self._commit(a) is not None and not self._exists(self._resolve(a, cwd))), None)
+        target = next((a for a in names if a != rev), None)
+        p = self._resolve(target, cwd) if target else None
+        upto = self.commits.index(self._commit(rev)) if rev else None
+        text = self._version_at(p, upto if upto is not None else 0) if p is not None else None
+        if text is None:
+            return "", 128, f"fatal: no such path '{target}' in {rev or 'HEAD'}"
+        lines, owners = [], []
+        known = sorted((i for i, c in enumerate(self.commits) if p in self.touched.get(c[0], ())), reverse=True)
+        for i in [i for i in known if i >= (upto or 0)] or [len(self.commits) - 1]:  # oldest first
+            new = (self._version_at(p, i) or "").split("\n")
+            got = [i] * len(new)
+            for tag, a1, a2, b1, b2 in difflib.SequenceMatcher(None, lines, new, autojunk=False).get_opcodes():
+                if tag == "equal":
+                    got[b1:b2] = owners[a1:a2]
+            lines, owners = new, got
+        if upto is None and p in self.files and self.files[p] != text:  # the working tree, with this session's edits
+            new = self.files[p].split("\n")
+            got = [None] * len(new)
+            for tag, a1, a2, b1, b2 in difflib.SequenceMatcher(None, lines, new, autojunk=False).get_opcodes():
+                if tag == "equal":
+                    got[b1:b2] = owners[a1:a2]
+            lines, owners = new, got
+        if lines and lines[-1] == "":
+            lines, owners = lines[:-1], owners[:-1]
+        lo, hi = span or (1, len(lines))
+        if lo < 1 or lo > len(lines):
+            return "", 128, f"fatal: file {target} has only {len(lines)} lines"
+        width = len(str(min(hi, len(lines))))
+        out = []
+        for n in range(lo, min(hi, len(lines)) + 1):
+            i = owners[n - 1]
+            if i is None:  # git stamps uncommitted lines with the current time
+                self._clock = True
+                h, who, when = "00000000", "Not Committed Yet", self._date(self.now, "iso")
+            else:
+                full = _full_hash(self.commits[i][0])
+                h = full if "-l" in rest else ("^" + full[:7] if i == len(self.commits) - 1 else full[:8])
+                who, when = AUTHOR[0], self._date(self.commits[i][3], "iso")
+            out.append(f"{h} {n:>{width}}) {lines[n - 1]}" if "-s" in rest else f"{h} ({who} {when} {n:>{width}}) {lines[n - 1]}")
+        return "\n".join(out), 0, ""
 
     @staticmethod
     def _under_any(p: str, paths: list) -> bool:
@@ -1654,6 +1780,9 @@ class Sandbox:
         if a[:1] == ["-m"] and len(a) > 1 and a[1].split(".")[0].lower() not in self._python_packages():
             return "", 1, f"/usr/bin/python3: No module named {a[1]}"
         if a and not a[0].startswith("-"):
+            if not self._exists(self._resolve(a[0], cwd)):  # e.g. a scratch script whose write was refused
+                where = a[0] if a[0].startswith("/") else posixpath.join(self.root, cwd, a[0])
+                return "", 2, f"{argv[0]}: can't open file '{where}': [Errno 2] No such file or directory"
             raise Action("runs a script")
         raise Unsupported(f"{argv[0]} {' '.join(a[:2])}")
 
@@ -1664,6 +1793,9 @@ class Sandbox:
         if a and a[0] in ("--version", "-v"):
             return "v22.11.0", 0, ""
         if a and not a[0].startswith("-"):
+            if not self._exists(self._resolve(a[0], cwd)):
+                where = a[0] if a[0].startswith("/") else posixpath.join(self.root, cwd, a[0])
+                return "", 1, f"Error: Cannot find module '{where}'"
             raise Action("runs a script")
         raise Unsupported("node -e")
 

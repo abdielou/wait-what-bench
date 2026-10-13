@@ -134,7 +134,8 @@ def tools_for(session) -> list | None:
 def smoke_cases(cases, sessions) -> list:
     """A few cases that touch every code path, for a cheap check before the full run: one
     non-sequitur per probe family (agentic where possible) with its twin control, which for the
-    time family is a time-critical pair (clock rounds), plus one chat non-sequitur."""
+    time family is a time-critical pair (clock rounds), one case from each control-only family,
+    plus one chat non-sequitur."""
     picked = []
 
     def add(c):
@@ -149,6 +150,8 @@ def smoke_cases(cases, sessions) -> list:
             add(ns)
             add(next((c for c in fam if c.expected == "proceed" and c.probe_source_id == ns.probe_source_id),
                      next((c for c in fam if c.expected == "proceed" and c.session_id == ns.session_id), None)))
+        else:  # controls only (unannounced switches, follow-ups)
+            add(next((c for c in fam if sessions[c.session_id].kind == "agentic"), fam[0]))
     add(next((c for c in cases if c.expected == "flag" and sessions[c.session_id].kind == "chat"), None))
     return picked
 

@@ -32,7 +32,8 @@ the tables above:
   no_false_alarm  cases where the timing is fine, or time doesn't matter, not flagged
 
 Validation sections at the end: how runs ended (answer / action / step cap / unsupported),
-commands the sandbox couldn't simulate, and judge labels with low confidence to check by hand.
+commands the sandbox couldn't simulate, judge labels with low confidence to check by hand, and, for
+replies that are in data/hand_labels.jsonl, how often the judge agreed with the hand labels.
 
 Usage: python -m wwb.report results/run-*.jsonl [--csv out.csv] [--base-rate 0.001] [--miss-cost 100]
 """
@@ -43,6 +44,8 @@ import csv
 import json
 from collections import defaultdict
 from pathlib import Path
+
+from . import agreement
 
 
 def load_rows(paths):
@@ -161,7 +164,7 @@ def group(rows, keys):
     return dict(sorted(g.items()))
 
 
-def render(rows, base_rate: float = 0.001, miss_cost: float = 100) -> str:
+def render(rows, base_rate: float = 0.001, miss_cost: float = 100, hand: list | None = None) -> str:
     out = []
     keys = ("model", "variant", "thinking")
     all_rows = rows
@@ -243,6 +246,9 @@ def render(rows, base_rate: float = 0.001, miss_cost: float = 100) -> str:
             out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(m['checked'])} | {fmt(m['catch'])} | {fmt(m['heeded'])} | "
                        f"{fmt(m['grounded'])} | {fmt(m['no_false_alarm'])} | {m['n_flag']}/{m['n_ctl']} | {m['excluded']} |")
     out += render_validation(all_rows, keys)
+    pairs = agreement.matched(all_rows, hand or [])
+    if pairs:
+        out += agreement.render(agreement.agreement([h for _, h in pairs], [r["label"] for r, _ in pairs]))
     return "\n".join(out) + "\n"
 
 
@@ -254,7 +260,7 @@ def main(argv=None):
     ap.add_argument("--miss-cost", type=float, default=100, help="a missed misfire costs this many false alarms")
     args = ap.parse_args(argv)
     rows = load_rows(args.results)
-    print(render(rows, args.base_rate, args.miss_cost))
+    print(render(rows, args.base_rate, args.miss_cost, agreement.load()))
     if args.csv:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)

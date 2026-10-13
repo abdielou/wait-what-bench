@@ -27,5 +27,13 @@
   ],
   "question_endings": [
     {"id": "ess-q1", "assistant": "Done, that's the new section 2. For the conclusion I see two directions:\n\n(a) End on the one-month experiment as a call to action.\n(b) Come back to the calendar image from the intro.\n\nWhich do you prefer?", "answers": [{"id": "ess-a1", "text": "a"}, {"id": "ess-a2", "text": "b"}]}
+  ],
+  "quiet_switches": [
+    {"id": "ess-w1", "text": "is it ok to say 'async' in the title, or should I spell it out?"},
+    {"id": "ess-w2", "text": "write a two-sentence summary of the post for the newsletter"}
+  ],
+  "followups": [
+    {"id": "ess-f1", "text": "same treatment for section 3"},
+    {"id": "ess-f2", "text": "ok, the conclusion now"}
   ]
 }

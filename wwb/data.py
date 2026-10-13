@@ -66,7 +66,8 @@ class Case:
     difficulty: str
     donor_session_id: str | None = None
     probe_source_id: str | None = None
-    # probe family: "swap" | "unasked_answer" | "paste" | "same_words" | "same_topic" | "peer_question" | "time"
+    # probe family: "swap" | "unasked_answer" | "paste" | "same_words" | "same_topic" | "peer_question" | "time",
+    # and for controls with no non-sequitur twin, "quiet_switch" | "followup"
     type: str = "swap"
     ending_id: str | None = None  # replace the last assistant turn with this question ending
     tail: list = field(default_factory=list)  # turns appended to the history before the probe (same_topic)

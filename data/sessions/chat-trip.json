@@ -30,5 +30,13 @@
   ],
   "lures": [
     {"id": "trip-l1", "targets": ["chat-essay"], "text": "for the conclusion of the trip, day 5, keep the calendar light: two things max, no early start"}
+  ],
+  "quiet_switches": [
+    {"id": "trip-w1", "text": "what's the tipping custom in Portugal?"},
+    {"id": "trip-w2", "text": "give me a short packing list for the trip"}
+  ],
+  "followups": [
+    {"id": "trip-f1", "text": "and for Jerónimos?"},
+    {"id": "trip-f2", "text": "how early is early?"}
   ]
 }

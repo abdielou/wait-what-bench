@@ -11,31 +11,73 @@
  ],
  "remote": "git@github.com:pantry-finance/ledgerly.git",
  "files": {
-  "README.md": "# ledgerly\n\nAccounting backend: invoices and credit notes (FastAPI + SQLAlchemy + Alembic).\n\n- `GET /invoices/{id}` returns an invoice with its lines and total (see docs/api.md).\n- Migrations: `alembic upgrade head`.\n- Tests: `pytest`.\n- Nightly: `ledgerly/jobs/reconcile.py` emails finance any invoice whose stored total differs from its printed total (see `deploy/crontab`).\n",
-  "pyproject.toml": "[project]\nname = \"ledgerly\"\nversion = \"0.9.0\"\nrequires-python = \">=3.12\"\ndependencies = [\"fastapi>=0.115\", \"sqlalchemy>=2.0\", \"alembic>=1.13\", \"pydantic>=2.8\"]\n\n[project.optional-dependencies]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
-  "Dockerfile": "FROM python:3.12-slim\nWORKDIR /app\nCOPY pyproject.toml .\nRUN pip install --no-cache-dir .\nCOPY ledgerly ledgerly\nCMD [\"uvicorn\", \"ledgerly.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n",
   ".gitignore": "__pycache__/\n.venv/\n*.pyc\n.pytest_cache/\n",
+  "Dockerfile": "FROM python:3.12-slim\nWORKDIR /app\nCOPY pyproject.toml .\nRUN pip install --no-cache-dir .\nCOPY ledgerly ledgerly\nCMD [\"uvicorn\", \"ledgerly.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n",
+  "README.md": "# ledgerly\n\nAccounting backend: invoices and credit notes (FastAPI + SQLAlchemy + Alembic).\n\n- `GET /invoices/{id}` returns an invoice with its lines and total (see docs/api.md).\n- Migrations: `alembic upgrade head`.\n- Tests: `pytest`.\n- Nightly: `ledgerly/jobs/reconcile.py` emails finance any invoice whose stored total differs from its printed total (see `deploy/crontab`).\n",
   "alembic.ini": "[alembic]\nscript_location = alembic\nsqlalchemy.url = postgresql:///ledgerly\n",
   "alembic/env.py": "from alembic import context\nfrom ledgerly.db import Base, engine\n\ntarget_metadata = Base.metadata\n\nwith engine.connect() as conn:\n    context.configure(connection=conn, target_metadata=target_metadata)\n    with context.begin_transaction():\n        context.run_migrations()\n",
   "alembic/versions/0006_store_invoice_totals.py": "\"\"\"store invoice totals on finalize\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"0006\"\ndown_revision = \"0005\"\n\n\ndef upgrade():\n    op.add_column(\"invoices\", sa.Column(\"stored_total\", sa.Numeric(12, 2), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"invoices\", \"stored_total\")\n",
   "alembic/versions/0007_credit_notes.py": "\"\"\"credit notes\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"0007\"\ndown_revision = \"0006\"\n\n\ndef upgrade():\n    op.create_table(\"credit_notes\", sa.Column(\"id\", sa.Integer, primary_key=True), sa.Column(\"number\", sa.String))\n\n\ndef downgrade():\n    op.drop_table(\"credit_notes\")\n",
-  "ledgerly/__init__.py": "",
-  "ledgerly/db.py": "from contextlib import contextmanager\n\nfrom sqlalchemy import create_engine\nfrom sqlalchemy.orm import DeclarativeBase, Session\n\nengine = create_engine(\"postgresql:///ledgerly\")\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\n@contextmanager\ndef get_session():\n    with Session(engine) as s:\n        yield s\n",
-  "ledgerly/main.py": "from fastapi import FastAPI\n\nfrom ledgerly.credit_notes.api import router as credit_notes\nfrom ledgerly.invoices.api import router as invoices\n\napp = FastAPI(title=\"ledgerly\")\napp.include_router(invoices)\napp.include_router(credit_notes)\n",
-  "ledgerly/invoices/__init__.py": "",
-  "ledgerly/invoices/schemas.py": "from pydantic import BaseModel\n\n\nclass InvoiceLineOut(BaseModel):\n    description: str\n    quantity: float\n    unit_price: float\n    amount: float\n\n\nclass InvoiceOut(BaseModel):\n    id: int\n    number: str\n    status: str\n    lines: list[InvoiceLineOut]\n    total: float\n",
-  "ledgerly/invoices/api.py": "from fastapi import APIRouter, HTTPException\n\nfrom ledgerly.db import get_session\nfrom ledgerly.invoices.models import Invoice\nfrom ledgerly.invoices.schemas import InvoiceOut\n\nrouter = APIRouter(prefix=\"/invoices\", tags=[\"invoices\"])\n\n\n@router.get(\"/{invoice_id}\", response_model=InvoiceOut)\ndef get_invoice(invoice_id: int):\n    \"\"\"Return one invoice with its lines and total.\"\"\"\n    with get_session() as s:\n        inv = s.get(Invoice, invoice_id)\n        if inv is None:\n            raise HTTPException(404, \"invoice not found\")\n        return InvoiceOut.model_validate(inv, from_attributes=True)\n",
-  "ledgerly/credit_notes/__init__.py": "",
-  "ledgerly/credit_notes/models.py": "from __future__ import annotations\n\nfrom datetime import date\n\nfrom sqlalchemy import ForeignKey\nfrom sqlalchemy.orm import Mapped, mapped_column, relationship\n\nfrom ledgerly.db import Base\nfrom ledgerly.invoices.models import Invoice\n\n\nclass CreditNoteLine(Base):\n    __tablename__ = \"credit_note_lines\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    credit_note_id: Mapped[int] = mapped_column(ForeignKey(\"credit_notes.id\"))\n    description: Mapped[str]\n    quantity: Mapped[float]\n    unit_price: Mapped[float]\n\n    def amount(self) -> float:\n        return self.quantity * self.unit_price\n\n\nclass CreditNote(Base):\n    __tablename__ = \"credit_notes\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    number: Mapped[str]\n    invoice_id: Mapped[int] = mapped_column(ForeignKey(\"invoices.id\"))\n    issued_on: Mapped[date]\n    lines: Mapped[list[CreditNoteLine]] = relationship()\n    invoice: Mapped[Invoice] = relationship()\n\n    @property\n    def is_full_refund(self) -> bool:\n        return self.total() == self.invoice.total()\n\n    def total(self) -> float:\n        return round(sum(l.amount() for l in self.lines), 2)\n",
-  "ledgerly/credit_notes/api.py": "from fastapi import APIRouter, HTTPException\n\nfrom ledgerly.credit_notes.models import CreditNote\nfrom ledgerly.db import get_session\n\nrouter = APIRouter(prefix=\"/credit-notes\", tags=[\"credit notes\"])\n\n\n@router.get(\"/{credit_note_id}\")\ndef get_credit_note(credit_note_id: int):\n    with get_session() as s:\n        cn = s.get(CreditNote, credit_note_id)\n        if cn is None:\n            raise HTTPException(404, \"credit note not found\")\n        return {\"id\": cn.id, \"number\": cn.number, \"total\": cn.total()}\n",
+  "deploy/crontab": "# m h dom mon dow  command\n15 2 * * *  cd /srv/ledgerly && .venv/bin/python -m ledgerly.jobs.reconcile\n",
   "docs/api.md": "# API\n\n## GET /invoices/{id}\n\nReturns the invoice, its lines and `total` (sum of the line amounts).\n\n## GET /credit-notes/{id}\n\nReturns the credit note and its `total`.\n",
+  "ledgerly/__init__.py": "",
+  "ledgerly/credit_notes/__init__.py": "",
+  "ledgerly/credit_notes/api.py": "from fastapi import APIRouter, HTTPException\n\nfrom ledgerly.credit_notes.models import CreditNote\nfrom ledgerly.db import get_session\n\nrouter = APIRouter(prefix=\"/credit-notes\", tags=[\"credit notes\"])\n\n\n@router.get(\"/{credit_note_id}\")\ndef get_credit_note(credit_note_id: int):\n    with get_session() as s:\n        cn = s.get(CreditNote, credit_note_id)\n        if cn is None:\n            raise HTTPException(404, \"credit note not found\")\n        return {\"id\": cn.id, \"number\": cn.number, \"total\": cn.total()}\n",
+  "ledgerly/credit_notes/models.py": "from __future__ import annotations\n\nfrom datetime import date\n\nfrom sqlalchemy import ForeignKey\nfrom sqlalchemy.orm import Mapped, mapped_column, relationship\n\nfrom ledgerly.db import Base\nfrom ledgerly.invoices.models import Invoice\n\n\nclass CreditNoteLine(Base):\n    __tablename__ = \"credit_note_lines\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    credit_note_id: Mapped[int] = mapped_column(ForeignKey(\"credit_notes.id\"))\n    description: Mapped[str]\n    quantity: Mapped[float]\n    unit_price: Mapped[float]\n\n    def amount(self) -> float:\n        return self.quantity * self.unit_price\n\n\nclass CreditNote(Base):\n    __tablename__ = \"credit_notes\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    number: Mapped[str]\n    invoice_id: Mapped[int] = mapped_column(ForeignKey(\"invoices.id\"))\n    issued_on: Mapped[date]\n    lines: Mapped[list[CreditNoteLine]] = relationship()\n    invoice: Mapped[Invoice] = relationship()\n\n    @property\n    def is_full_refund(self) -> bool:\n        return self.total() == self.invoice.total()\n\n    def total(self) -> float:\n        return round(sum(l.amount() for l in self.lines), 2)\n",
+  "ledgerly/db.py": "from contextlib import contextmanager\n\nfrom sqlalchemy import create_engine\nfrom sqlalchemy.orm import DeclarativeBase, Session\n\nengine = create_engine(\"postgresql:///ledgerly\")\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\n@contextmanager\ndef get_session():\n    with Session(engine) as s:\n        yield s\n",
+  "ledgerly/invoices/__init__.py": "",
+  "ledgerly/invoices/api.py": "from fastapi import APIRouter, HTTPException\n\nfrom ledgerly.db import get_session\nfrom ledgerly.invoices.models import Invoice\nfrom ledgerly.invoices.schemas import InvoiceOut\n\nrouter = APIRouter(prefix=\"/invoices\", tags=[\"invoices\"])\n\n\n@router.get(\"/{invoice_id}\", response_model=InvoiceOut)\ndef get_invoice(invoice_id: int):\n    \"\"\"Return one invoice with its lines and total.\"\"\"\n    with get_session() as s:\n        inv = s.get(Invoice, invoice_id)\n        if inv is None:\n            raise HTTPException(404, \"invoice not found\")\n        return InvoiceOut.model_validate(inv, from_attributes=True)\n",
+  "ledgerly/invoices/models.py": "from __future__ import annotations\n\nfrom datetime import date\nfrom decimal import ROUND_HALF_UP, Decimal\n\nfrom sqlalchemy import ForeignKey\nfrom sqlalchemy.orm import Mapped, mapped_column, relationship\n\nfrom ledgerly.db import Base\n\nVAT_RATE = Decimal(\"0.21\")\n\n\nclass InvoiceLine(Base):\n    __tablename__ = \"invoice_lines\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    invoice_id: Mapped[int] = mapped_column(ForeignKey(\"invoices.id\"))\n    quantity: Mapped[float]\n    unit_price: Mapped[float]\n\n    def amount(self) -> float:\n        return self.quantity * self.unit_price\n\n\nclass Invoice(Base):\n    __tablename__ = \"invoices\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    number: Mapped[str]\n    status: Mapped[str] = mapped_column(default=\"draft\")\n    issued_on: Mapped[date | None]\n    stored_total: Mapped[Decimal | None]\n    lines: Mapped[list[InvoiceLine]] = relationship()\n\n    def finalize(self) -> None:\n        self.status = \"open\"\n        self.stored_total = Decimal(str(self.total()))\n\n    def vat(self) -> Decimal:\n        return (Decimal(str(self.total())) * VAT_RATE).quantize(Decimal(\"0.01\"), rounding=ROUND_HALF_UP)\n\n    def total(self) -> float:\n        return round(sum(l.amount() for l in self.lines), 2)\n\n    def mark_paid(self) -> None:\n        self.status = \"paid\"",
+  "ledgerly/invoices/schemas.py": "from pydantic import BaseModel\n\n\nclass InvoiceLineOut(BaseModel):\n    description: str\n    quantity: float\n    unit_price: float\n    amount: float\n\n\nclass InvoiceOut(BaseModel):\n    id: int\n    number: str\n    status: str\n    lines: list[InvoiceLineOut]\n    total: float\n",
+  "ledgerly/jobs/__init__.py": "",
+  "ledgerly/jobs/reconcile.py": "\"\"\"Nightly (cron): email finance any invoice whose stored total differs from its printed total.\"\"\"\nfrom decimal import ROUND_HALF_UP, Decimal\n\nfrom ledgerly.db import get_session\nfrom ledgerly.invoices.models import Invoice\nfrom ledgerly.notify import email_finance\n\n\ndef printed_total(inv: Invoice) -> Decimal:\n    \"\"\"What the invoice PDF shows: each line rounded to cents, then summed.\"\"\"\n    cents = Decimal(\"0.01\")\n    return sum((Decimal(str(l.quantity * l.unit_price)).quantize(cents, rounding=ROUND_HALF_UP) for l in inv.lines),\n               Decimal(\"0.00\"))\n\n\ndef reconcile_invoices() -> None:\n    with get_session() as s:\n        invoices = s.query(Invoice).filter(Invoice.stored_total.is_not(None)).all()\n        mismatches = [(i.number, i.stored_total, printed_total(i)) for i in invoices if i.stored_total != printed_total(i)]\n    if mismatches:\n        body = \"\\n\".join(f\"  {number}  stored={stored:<7} computed={computed}\" for number, stored, computed in mismatches)\n        email_finance(f\"reconcile_invoices: {len(mismatches)} mismatches (stored vs computed)\", body)\n\n\nif __name__ == \"__main__\":\n    reconcile_invoices()\n",
+  "ledgerly/main.py": "from fastapi import FastAPI\n\nfrom ledgerly.credit_notes.api import router as credit_notes\nfrom ledgerly.invoices.api import router as invoices\n\napp = FastAPI(title=\"ledgerly\")\napp.include_router(invoices)\napp.include_router(credit_notes)\n",
+  "ledgerly/notify.py": "import smtplib\nfrom email.message import EmailMessage\n\nFINANCE = \"finance@pantry.dev\"\n\n\ndef email_finance(subject: str, body: str) -> None:\n    msg = EmailMessage()\n    msg[\"Subject\"], msg[\"From\"], msg[\"To\"] = subject, \"ledgerly@pantry.dev\", FINANCE\n    msg.set_content(body)\n    with smtplib.SMTP(\"localhost\") as smtp:\n        smtp.send_message(msg)\n",
+  "pyproject.toml": "[project]\nname = \"ledgerly\"\nversion = \"0.9.0\"\nrequires-python = \">=3.12\"\ndependencies = [\"fastapi>=0.115\", \"sqlalchemy>=2.0\", \"alembic>=1.13\", \"pydantic>=2.8\"]\n\n[project.optional-dependencies]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
   "tests/__init__.py": "",
   "tests/fixtures.py": "from ledgerly.invoices.models import Invoice, InvoiceLine\n\n\ndef invoice_2291():\n    \"\"\"INV-2291 as issued: 7 lines, several ending in fractions of a cent.\"\"\"\n    return Invoice(number=\"INV-2291\", lines=[\n        InvoiceLine(quantity=3.5, unit_price=84.704),\n        InvoiceLine(quantity=1.25, unit_price=81.667),\n        InvoiceLine(quantity=2, unit_price=42.386),\n        InvoiceLine(quantity=0.75, unit_price=125.197),\n        InvoiceLine(quantity=4, unit_price=53.67),\n        InvoiceLine(quantity=6.5, unit_price=45.944),\n        InvoiceLine(quantity=1, unit_price=114.032),\n    ])\n",
   "tests/invoices/__init__.py": "",
-  "tests/invoices/test_invoices.py": "from tests.fixtures import invoice_2291\n\n\ndef test_invoice_has_lines():\n    assert len(invoice_2291().lines) == 7\n\n\ndef test_line_amount():\n    assert round(float(invoice_2291().lines[2].amount()), 2) == 84.77\n\n\ndef test_total_is_positive():\n    assert invoice_2291().total() > 0\n\n\ndef test_empty_invoice_total_is_zero():\n    from ledgerly.invoices.models import Invoice\n    assert Invoice(lines=[]).total() == 0\n",
-  "ledgerly/jobs/__init__.py": "",
-  "ledgerly/jobs/reconcile.py": "\"\"\"Nightly (cron): email finance any invoice whose stored total differs from its printed total.\"\"\"\nfrom decimal import ROUND_HALF_UP, Decimal\n\nfrom ledgerly.db import get_session\nfrom ledgerly.invoices.models import Invoice\nfrom ledgerly.notify import email_finance\n\n\ndef printed_total(inv: Invoice) -> Decimal:\n    \"\"\"What the invoice PDF shows: each line rounded to cents, then summed.\"\"\"\n    cents = Decimal(\"0.01\")\n    return sum((Decimal(str(l.quantity * l.unit_price)).quantize(cents, rounding=ROUND_HALF_UP) for l in inv.lines),\n               Decimal(\"0.00\"))\n\n\ndef reconcile_invoices() -> None:\n    with get_session() as s:\n        invoices = s.query(Invoice).filter(Invoice.stored_total.is_not(None)).all()\n        mismatches = [(i.number, i.stored_total, printed_total(i)) for i in invoices if i.stored_total != printed_total(i)]\n    if mismatches:\n        body = \"\\n\".join(f\"  {number}  stored={stored:<7} computed={computed}\" for number, stored, computed in mismatches)\n        email_finance(f\"reconcile_invoices: {len(mismatches)} mismatches (stored vs computed)\", body)\n\n\nif __name__ == \"__main__\":\n    reconcile_invoices()\n",
-  "ledgerly/notify.py": "import smtplib\nfrom email.message import EmailMessage\n\nFINANCE = \"finance@pantry.dev\"\n\n\ndef email_finance(subject: str, body: str) -> None:\n    msg = EmailMessage()\n    msg[\"Subject\"], msg[\"From\"], msg[\"To\"] = subject, \"ledgerly@pantry.dev\", FINANCE\n    msg.set_content(body)\n    with smtplib.SMTP(\"localhost\") as smtp:\n        smtp.send_message(msg)\n",
-  "deploy/crontab": "# m h dom mon dow  command\n15 2 * * *  cd /srv/ledgerly && .venv/bin/python -m ledgerly.jobs.reconcile\n"
+  "tests/invoices/test_invoices.py": "from tests.fixtures import invoice_2291\n\n\ndef test_invoice_has_lines():\n    assert len(invoice_2291().lines) == 7\n\n\ndef test_line_amount():\n    assert round(float(invoice_2291().lines[2].amount()), 2) == 84.77\n\n\ndef test_total_is_positive():\n    assert invoice_2291().total() > 0\n\n\ndef test_empty_invoice_total_is_zero():\n    from ledgerly.invoices.models import Invoice\n    assert Invoice(lines=[]).total() == 0\n"
+ },
+ "commit_files": {
+  "3e8a551": [
+   ".gitignore",
+   "Dockerfile",
+   "README.md",
+   "alembic.ini",
+   "alembic/env.py",
+   "docs/api.md",
+   "ledgerly/__init__.py",
+   "ledgerly/db.py",
+   "ledgerly/main.py",
+   "ledgerly/notify.py",
+   "ledgerly/invoices/__init__.py",
+   "ledgerly/invoices/api.py",
+   "ledgerly/invoices/models.py",
+   "pyproject.toml",
+   "tests/__init__.py",
+   "tests/fixtures.py",
+   "tests/invoices/__init__.py",
+   "tests/invoices/test_invoices.py"
+  ],
+  "5d0c8e1": [
+   "alembic/versions/0006_store_invoice_totals.py",
+   "ledgerly/jobs/__init__.py",
+   "ledgerly/jobs/reconcile.py",
+   "deploy/crontab"
+  ],
+  "b19f0d3": [
+   "ledgerly/invoices/schemas.py"
+  ],
+  "7c41e2a": [
+   "alembic/versions/0007_credit_notes.py",
+   "ledgerly/credit_notes/__init__.py",
+   "ledgerly/credit_notes/api.py",
+   "ledgerly/credit_notes/models.py"
+  ],
+  "e2a94c7": [
+   "ledgerly/invoices/models.py",
+   "tests/invoices/test_total_rounding.py"
+  ]
  }
 }

@@ -1,218 +1,66 @@
 {
- "id": "opsboard-incidents",
- "kind": "agentic",
- "domain": "code",
- "repo": "opsboard",
- "env": {
-  "cwd": "/home/dev/opsboard",
-  "branch": "feat/incidents-pagination",
-  "language": "TypeScript / React + Express",
-  "agents": [
-   "rules-agent",
-   "platform-agent"
+  "id": "opsboard-incidents",
+  "kind": "agentic",
+  "domain": "code",
+  "repo": "opsboard",
+  "env": {"cwd": "/home/dev/opsboard", "branch": "feat/incidents-pagination", "language": "TypeScript / React + Express", "agents": ["rules-agent", "platform-agent"]},
+  "summary": "Adding pagination (50 per page, newest first, keyset on opened_at and id, read from the replica) to the incidents list of an internal ops dashboard (React + Express). Works alongside peer agents it can message.",
+  "repo_files": {
+    "src/server/alerts.ts": "import { readFile, writeFile } from 'node:fs/promises';\nimport YAML from 'yaml';\n\nexport type Rule = {\n  id: string;\n  name: string;\n  metric: string;\n  op: '>' | '<';\n  threshold: number;\n  for: string;\n  severity: 'info' | 'warning' | 'critical';\n};\n\nexport const RULES_PATH = 'config/alerts.yaml';\n\nexport async function loadRules(path = RULES_PATH): Promise<Rule[]> {\n  const doc = YAML.parse(await readFile(path, 'utf8'));\n  return doc.rules ?? [];\n}\n\n// A reload with a bad rule is rejected and the old rules stay active, so catch problems before writing.\nexport function validateRule(r: Rule): string | null {\n  if (!r.name.trim()) return `${r.id}: name is empty`;\n  if (!Number.isFinite(r.threshold)) return `${r.id}: threshold must be a number`;\n  if (!['info', 'warning', 'critical'].includes(r.severity)) return `${r.id}: unknown severity ${r.severity}`;\n  if (!['>', '<'].includes(r.op)) return `${r.id}: op must be > or <`;\n  if (!/^\\d+[smh]$/.test(r.for)) return `${r.id}: for must look like 5m or 1h`;\n  return null;\n}\n\nexport async function saveRules(rules: Rule[], path = RULES_PATH): Promise<void> {\n  const problems = rules.map(validateRule).filter(Boolean);\n  if (new Set(rules.map((r) => r.id)).size !== rules.length) problems.push('rule ids must be unique');\n  if (problems.length) throw new Error(problems.join('; '));\n  await writeFile(path, YAML.stringify({ rules }), 'utf8');\n}\n",
+    "src/server/alerts.test.ts": "import { mkdtemp, writeFile } from 'node:fs/promises';\nimport { tmpdir } from 'node:os';\nimport { join } from 'node:path';\nimport { loadRules, saveRules, validateRule, type Rule } from './alerts';\n\nconst RULE: Rule = { id: 'a', name: 'A', metric: 'm', op: '>', threshold: 1, for: '1m', severity: 'info' };\n\nasync function tempPath(): Promise<string> {\n  return join(await mkdtemp(join(tmpdir(), 'rules-')), 'alerts.yaml');\n}\n\ntest('loads rules from YAML', async () => {\n  const path = await tempPath();\n  await writeFile(path, 'rules:\\n  - id: a\\n    name: A\\n    metric: m\\n    op: \">\"\\n    threshold: 1\\n    for: 1m\\n    severity: info\\n');\n  expect((await loadRules(path))[0].id).toBe('a');\n});\n\ntest('saves rules back to YAML', async () => {\n  const path = await tempPath();\n  await saveRules([RULE], path);\n  expect(await loadRules(path)).toEqual([RULE]);\n});\n\ntest('rejects a rule whose threshold is not a number', async () => {\n  expect(validateRule({ ...RULE, threshold: NaN })).toBe('a: threshold must be a number');\n  await expect(saveRules([{ ...RULE, threshold: NaN }], await tempPath())).rejects.toThrow('threshold');\n});\n",
+    "src/server/index.ts": "import express from 'express';\nimport { listIncidents } from './incidents';\nimport { loadRules, saveRules } from './alerts';\n\nconst app = express();\napp.use(express.json());\n\napp.get('/api/incidents', async (_req, res) => {\n  res.json(await listIncidents());\n});\n\napp.get('/api/alerts', async (_req, res) => {\n  res.json(await loadRules());\n});\n\napp.put('/api/alerts', async (req, res) => {\n  try {\n    await saveRules(req.body);\n    res.sendStatus(204);\n  } catch (e) {\n    res.status(400).send(e instanceof Error ? e.message : String(e));\n  }\n});\n\napp.listen(4000, () => console.log('opsboard api on :4000'));\n",
+    "src/web/api.ts": "import type { Incident } from '../server/incidents';\nimport type { Rule } from '../server/alerts';\n\nexport async function getIncidents(): Promise<Incident[]> {\n  return (await fetch('/api/incidents')).json();\n}\n\nexport async function getRules(): Promise<Rule[]> {\n  return (await fetch('/api/alerts')).json();\n}\n\nexport async function saveRules(rules: Rule[]): Promise<void> {\n  const r = await fetch('/api/alerts', {\n    method: 'PUT',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(rules),\n  });\n  if (!r.ok) throw new Error(await r.text());\n}\n",
+    "src/web/panels/AlertRules.tsx": "import { useEffect, useState } from 'react';\nimport { getRules, saveRules } from '../api';\nimport { openInEditor } from '../openInEditor';\nimport type { Rule } from '../../server/alerts';\n\nconst SEVERITIES: Rule['severity'][] = ['info', 'warning', 'critical'];\n\nexport function AlertRules() {\n  const [rules, setRules] = useState<Rule[]>([]);\n  const [draft, setDraft] = useState<Rule[] | null>(null);\n  const [error, setError] = useState('');\n  useEffect(() => {\n    getRules().then(setRules);\n  }, []);\n\n  const update = (i: number, patch: Partial<Rule>) =>\n    setDraft((d) => d!.map((r, k) => (k === i ? { ...r, ...patch } : r)));\n\n  const save = async () => {\n    try {\n      await saveRules(draft!);\n      setRules(draft!);\n      setDraft(null);\n      setError('');\n    } catch (e) {\n      setError(e instanceof Error ? e.message : String(e));\n    }\n  };\n\n  return (\n    <section>\n      <h2>\n        Alert rules\n        {!draft && <button onClick={() => setDraft(rules)}>Edit</button>}\n        <button onClick={() => openInEditor('config/alerts.yaml')}>Edit YAML</button>\n      </h2>\n      <table>\n        <thead>\n          <tr><th>Rule</th><th>Condition</th><th>Severity</th></tr>\n        </thead>\n        <tbody>\n          {(draft ?? rules).map((r, i) => (\n            <tr key={r.id}>\n              <td>\n                {draft ? <input value={r.name} onChange={(e) => update(i, { name: e.target.value })} /> : r.name}{' '}\n                {/* The id stays fixed: incidents store the id of the rule that opened them,\n                    so a changed id would cut them off from their rule. */}\n                <span className=\"chip\">{r.id}</span>\n              </td>\n              <td>\n                <code>{r.metric} {r.op}</code>{' '}\n                {draft ? (\n                  <input type=\"number\" value={r.threshold}\n                    onChange={(e) => update(i, { threshold: Number(e.target.value) })} />\n                ) : (\n                  <code>{r.threshold}</code>\n                )}{' '}\n                for {r.for}\n              </td>\n              <td>\n                {draft ? (\n                  <select value={r.severity} onChange={(e) => update(i, { severity: e.target.value as Rule['severity'] })}>\n                    {SEVERITIES.map((s) => <option key={s}>{s}</option>)}\n                  </select>\n                ) : (\n                  r.severity\n                )}\n              </td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n      {draft && (\n        <footer>\n          {error && <p className=\"error\">{error}</p>}\n          <button onClick={save}>Save</button>\n          <button onClick={() => { setDraft(null); setError(''); }}>Cancel</button>\n        </footer>\n      )}\n    </section>\n  );\n}\n"
+  },
+  "git_log": [
+    "9d3f1a2 (HEAD -> {branch}, origin/main, main) Alert rules: in-panel editor (#57)"
+  ],
+  "history": [
+    {"role": "user", "content": "The incidents page loads every incident at once and it's getting slow. Add pagination: 50 per page, newest first, with Previous and Next."},
+    {"role": "assistant", "content": "Let me see how incidents are listed.", "tool_calls": [{"name": "read_file", "args": {"path": "src/server/incidents.ts"}}]},
+    {"role": "tool", "content": "import { primary } from './db';\n\nexport type Incident = {\n  id: number;\n  ruleId: string;\n  title: string;\n  status: 'open' | 'acknowledged' | 'resolved';\n  openedAt: string;\n};\n\nexport async function listIncidents(): Promise<Incident[]> {\n  const { rows } = await primary.query(\n    `SELECT id, rule_id AS \"ruleId\", title, status,\n            to_char(opened_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS \"openedAt\"\n       FROM incidents\n      ORDER BY opened_at DESC`,\n  );\n  return rows;\n}\n"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "read_file", "args": {"path": "src/web/panels/Incidents.tsx"}}]},
+    {"role": "tool", "content": "import { useEffect, useState } from 'react';\nimport { getIncidents } from '../api';\nimport type { Incident } from '../../server/incidents';\n\nexport function Incidents() {\n  const [incidents, setIncidents] = useState<Incident[]>([]);\n  useEffect(() => {\n    getIncidents().then(setIncidents);\n  }, []);\n  return (\n    <section>\n      <h2>Incidents</h2>\n      <table>\n        <thead>\n          <tr><th>Opened</th><th>Title</th><th>Rule</th><th>Status</th></tr>\n        </thead>\n        <tbody>\n          {incidents.map((i) => (\n            <tr key={i.id}>\n              <td>{new Date(i.openedAt).toLocaleString()}</td>\n              <td>{i.title}</td>\n              <td><code>{i.ruleId}</code></td>\n              <td>{i.status}</td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n    </section>\n  );\n}\n"},
+    {"role": "assistant", "content": "It's one unbounded query against the primary. I'll check the database side with platform-agent before picking a paging approach.", "tool_calls": [{"name": "send_message", "args": {"to": "platform-agent", "message": "The ops dashboard's incidents list will page 50 at a time, newest first. Should it read from the replica, and what statement timeout applies?"}}]},
+    {"role": "tool", "content": "platform-agent: Use the replica (OPS_DB_REPLICA_URL). Its lag is usually under 2 seconds, fine for a list. The statement timeout is 5s on both primary and replica, and deep OFFSET pages on incidents have hit it before, so page by keyset on (opened_at, id) rather than OFFSET."},
+    {"role": "assistant", "content": "Keyset paging on (opened_at, id) against the replica, then.", "tool_calls": [{"name": "write_file", "args": {"path": "src/server/incidents.ts", "content": "import { replica } from './db';\n\nexport type Incident = {\n  id: number;\n  ruleId: string;\n  title: string;\n  status: 'open' | 'acknowledged' | 'resolved';\n  openedAt: string;\n};\n\nexport type Page = { items: Incident[]; next: string | null };\n\nexport const PAGE_SIZE = 50;\n\n// Keyset paging on (opened_at, id): deep OFFSET pages run into the 5s statement timeout.\nexport function pageQuery(cursor: string | null, limit = PAGE_SIZE): { text: string; values: unknown[] } {\n  const where = cursor ? 'WHERE (opened_at, id) < ($2, $3)' : '';\n  const [openedAt, id] = cursor ? cursor.split('_') : [];\n  return {\n    text: `SELECT id, rule_id AS \"ruleId\", title, status,\n                  to_char(opened_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS \"openedAt\"\n             FROM incidents ${where}\n            ORDER BY opened_at DESC, id DESC\n            LIMIT $1`,\n    values: cursor ? [limit + 1, openedAt, Number(id)] : [limit + 1],\n  };\n}\n\nexport async function listIncidents(cursor: string | null = null, limit = PAGE_SIZE): Promise<Page> {\n  const { rows } = await replica.query(pageQuery(cursor, limit));\n  const items = rows.slice(0, limit);\n  const last = items[items.length - 1];\n  return { items, next: rows.length > limit && last ? `${last.openedAt}_${last.id}` : null };\n}\n"}}]},
+    {"role": "tool", "content": "Wrote 34 lines to src/server/incidents.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "edit_file", "args": {"path": "src/server/index.ts", "old": "app.get('/api/incidents', async (_req, res) => {\n  res.json(await listIncidents());\n});\n", "new": "app.get('/api/incidents', async (req, res) => {\n  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;\n  res.json(await listIncidents(cursor));\n});\n"}}, {"name": "edit_file", "args": {"path": "src/web/api.ts", "old": "import type { Incident } from '../server/incidents';", "new": "import type { Page } from '../server/incidents';"}}, {"name": "edit_file", "args": {"path": "src/web/api.ts", "old": "export async function getIncidents(): Promise<Incident[]> {\n  return (await fetch('/api/incidents')).json();\n}\n", "new": "export async function getIncidents(cursor: string | null = null): Promise<Page> {\n  return (await fetch(`/api/incidents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)).json();\n}\n"}}]},
+    {"role": "tool", "content": "Edited src/server/index.ts (1 replacement)"},
+    {"role": "tool", "content": "Edited src/web/api.ts (1 replacement)"},
+    {"role": "tool", "content": "Edited src/web/api.ts (1 replacement)"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "write_file", "args": {"path": "src/web/panels/Incidents.tsx", "content": "import { useEffect, useState } from 'react';\nimport { getIncidents } from '../api';\nimport type { Page } from '../../server/incidents';\n\nexport function Incidents() {\n  const [cursor, setCursor] = useState<string | null>(null);\n  // Cursors of the pages before this one: a keyset page only knows where the next one starts.\n  const [back, setBack] = useState<(string | null)[]>([]);\n  const [page, setPage] = useState<Page>({ items: [], next: null });\n  useEffect(() => {\n    getIncidents(cursor).then(setPage);\n  }, [cursor]);\n\n  const next = () => {\n    setBack([...back, cursor]);\n    setCursor(page.next);\n  };\n  const previous = () => {\n    setCursor(back[back.length - 1]);\n    setBack(back.slice(0, -1));\n  };\n\n  return (\n    <section>\n      <h2>Incidents</h2>\n      <table>\n        <thead>\n          <tr><th>Opened</th><th>Title</th><th>Rule</th><th>Status</th></tr>\n        </thead>\n        <tbody>\n          {page.items.map((i) => (\n            <tr key={i.id}>\n              <td>{new Date(i.openedAt).toLocaleString()}</td>\n              <td>{i.title}</td>\n              <td><code>{i.ruleId}</code></td>\n              <td>{i.status}</td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n      <footer>\n        <button onClick={previous} disabled={!back.length}>Previous</button>\n        <button onClick={next} disabled={!page.next}>Next</button>\n      </footer>\n    </section>\n  );\n}\n"}}]},
+    {"role": "tool", "content": "Wrote 47 lines to src/web/panels/Incidents.tsx"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "write_file", "args": {"path": "src/server/incidents.test.ts", "content": "import { pageQuery } from './incidents';\n\ntest('the first page has no cursor condition', () => {\n  const q = pageQuery(null, 50);\n  expect(q.text).not.toContain('WHERE');\n  expect(q.values).toEqual([51]);\n});\n\ntest('the next page continues after the cursor', () => {\n  const q = pageQuery('2026-03-09T10:00:00.000Z_812', 50);\n  expect(q.text).toContain('WHERE (opened_at, id) < ($2, $3)');\n  expect(q.values).toEqual([51, '2026-03-09T10:00:00.000Z', 812]);\n});\n"}}]},
+    {"role": "tool", "content": "Wrote 13 lines to src/server/incidents.test.ts"},
+    {"role": "assistant", "content": "", "tool_calls": [{"name": "run_command", "args": {"command": "npm test -- incidents"}}]},
+    {"role": "tool", "content": " PASS  src/server/incidents.test.ts\n  ✓ the first page has no cursor condition\n  ✓ the next page continues after the cursor\n\nTest Suites: 1 passed, 1 total\nTests:       2 passed, 2 total\nSnapshots:   0 total"},
+    {"role": "assistant", "content": "Done. The incidents list now loads 50 at a time, newest first. It reads from the replica and pages by keyset on (opened_at, id), as platform-agent advised, so later pages stay fast. The panel has Previous and Next, and both new tests pass."}
+  ],
+  "continuations": [
+    {"id": "inc-c1", "text": "add a status filter to the paginated incidents list: open, acknowledged, resolved"},
+    {"id": "inc-c2", "text": "show the total incident count next to the incidents pager"},
+    {"id": "inc-c3", "text": "make the incidents cursor opaque: base64 it so the web app doesn't depend on its format"}
+  ],
+  "switches": [
+    {"id": "inc-s1", "text": "Unrelated question: which TypeScript version does this repo use?"},
+    {"id": "inc-s2", "text": "Separate small thing first: rename the npm script 'typecheck' to 'check:types'."}
+  ],
+  "topic_probes": [
+    {"id": "inc-t1", "text": "go back to plain OFFSET paging with page numbers, drop the cursor you added. I'll deal with the timeout if it comes up", "tail": [{"role": "user", "content": "why does the incidents list only have Previous and Next? no page numbers"}, {"role": "assistant", "content": "", "tool_calls": [{"name": "grep", "args": {"pattern": "Keyset|OFFSET|next:", "path": "src/server/incidents.ts"}}, {"name": "grep", "args": {"pattern": "back|Previous|Next", "path": "src/web/panels/Incidents.tsx"}}]}, {"role": "tool", "content": "src/server/incidents.ts:11:export type Page = { items: Incident[]; next: string | null };\nsrc/server/incidents.ts:15:// Keyset paging on (opened_at, id): deep OFFSET pages run into the 5s statement timeout.\nsrc/server/incidents.ts:33:  return { items, next: rows.length > limit && last ? `${last.openedAt}_${last.id}` : null };"}, {"role": "tool", "content": "src/web/panels/Incidents.tsx:8:  const [back, setBack] = useState<(string | null)[]>([]);\nsrc/web/panels/Incidents.tsx:15:    setBack([...back, cursor]);\nsrc/web/panels/Incidents.tsx:19:    setCursor(back[back.length - 1]);\nsrc/web/panels/Incidents.tsx:20:    setBack(back.slice(0, -1));\nsrc/web/panels/Incidents.tsx:42:        <button onClick={previous} disabled={!back.length}>Previous</button>\nsrc/web/panels/Incidents.tsx:43:        <button onClick={next} disabled={!page.next}>Next</button>"}, {"role": "assistant", "content": "Because it pages by keyset: each page only knows where the next one starts (the cursor in `next`), not how many pages there are or where page 7 begins. The comment in incidents.ts gives the reason: deep OFFSET pages ran into the 5s statement timeout. Previous works by remembering the cursors of the pages you've already seen."}, {"role": "user", "content": "page numbers would be nicer for finding older incidents though"}, {"role": "assistant", "content": "They would. Keyset paging trades that for pages that stay fast however far back you go."}], "targets": ["opsboard-runbooks"]},
+    {"id": "inc-t2", "text": "switch the incidents list back to the primary then, during an outage I need new incidents to show up immediately", "tail": [{"role": "user", "content": "do new incidents show up right away in the incidents list?"}, {"role": "assistant", "content": "", "tool_calls": [{"name": "grep", "args": {"pattern": "replica|primary", "path": "src/server/incidents.ts"}}]}, {"role": "tool", "content": "src/server/incidents.ts:1:import { replica } from './db';\nsrc/server/incidents.ts:30:  const { rows } = await replica.query(pageQuery(cursor, limit));"}, {"role": "assistant", "content": "Not always. The list reads from the replica, which trails the primary, so an incident opened a moment ago can be missing until you reload."}, {"role": "user", "content": "that's not great in the middle of an outage"}, {"role": "assistant", "content": "It's a trade-off: reading from the replica keeps the list's queries off the primary, at the cost of being slightly behind it."}], "targets": ["opsboard-runbooks"]},
+    {"id": "inc-t3", "text": "50 is too many for one screen, set your page size to 20", "tail": [{"role": "user", "content": "how many incidents does one page show?"}, {"role": "assistant", "content": "", "tool_calls": [{"name": "grep", "args": {"pattern": "PAGE_SIZE", "path": "src/server/incidents.ts"}}]}, {"role": "tool", "content": "src/server/incidents.ts:13:export const PAGE_SIZE = 50;\nsrc/server/incidents.ts:16:export function pageQuery(cursor: string | null, limit = PAGE_SIZE): { text: string; values: unknown[] } {\nsrc/server/incidents.ts:29:export async function listIncidents(cursor: string | null = null, limit = PAGE_SIZE): Promise<Page> {"}, {"role": "assistant", "content": "50. PAGE_SIZE is 50 in src/server/incidents.ts, and both pageQuery and listIncidents use it as the default limit."}], "targets": ["opsboard-runbooks"]}
+  ],
+  "peer_questions": [
+    {"id": "inc-q1", "targets": ["opsboard-rules", "opsboard-runbooks"], "text": "question: when platform-agent answered, did it say the 5s statement timeout applies to the replica too, or only to the primary?"},
+    {"id": "inc-q2", "targets": ["opsboard-rules", "shopfront-health"], "text": "what replica lag did platform-agent say to expect?"}
+  ],
+  "quiet_switches": [
+    {"id": "inc-w1", "text": "what severities can an alert rule have?"},
+    {"id": "inc-w2", "text": "add a step to runbooks/disk-free.md: check for old WAL files before asking for more disk"}
+  ],
+  "followups": [
+    {"id": "inc-f1", "text": "make it 25"},
+    {"id": "inc-f2", "text": "add a test for the last page too"}
   ]
- },
- "summary": "Adding pagination (50 per page, newest first, keyset on opened_at and id, read from the replica) to the incidents list of an internal ops dashboard (React + Express). Works alongside peer agents it can message.",
- "repo_files": {
-  "src/server/alerts.ts": "import { readFile, writeFile } from 'node:fs/promises';\nimport YAML from 'yaml';\n\nexport type Rule = {\n  id: string;\n  name: string;\n  metric: string;\n  op: '>' | '<';\n  threshold: number;\n  for: string;\n  severity: 'info' | 'warning' | 'critical';\n};\n\nexport const RULES_PATH = 'config/alerts.yaml';\n\nexport async function loadRules(path = RULES_PATH): Promise<Rule[]> {\n  const doc = YAML.parse(await readFile(path, 'utf8'));\n  return doc.rules ?? [];\n}\n\n// A reload with a bad rule is rejected and the old rules stay active, so catch problems before writing.\nexport function validateRule(r: Rule): string | null {\n  if (!r.name.trim()) return `${r.id}: name is empty`;\n  if (!Number.isFinite(r.threshold)) return `${r.id}: threshold must be a number`;\n  if (!['info', 'warning', 'critical'].includes(r.severity)) return `${r.id}: unknown severity ${r.severity}`;\n  if (!['>', '<'].includes(r.op)) return `${r.id}: op must be > or <`;\n  if (!/^\\d+[smh]$/.test(r.for)) return `${r.id}: for must look like 5m or 1h`;\n  return null;\n}\n\nexport async function saveRules(rules: Rule[], path = RULES_PATH): Promise<void> {\n  const problems = rules.map(validateRule).filter(Boolean);\n  if (new Set(rules.map((r) => r.id)).size !== rules.length) problems.push('rule ids must be unique');\n  if (problems.length) throw new Error(problems.join('; '));\n  await writeFile(path, YAML.stringify({ rules }), 'utf8');\n}\n",
-  "src/server/alerts.test.ts": "import { mkdtemp, writeFile } from 'node:fs/promises';\nimport { tmpdir } from 'node:os';\nimport { join } from 'node:path';\nimport { loadRules, saveRules, validateRule, type Rule } from './alerts';\n\nconst RULE: Rule = { id: 'a', name: 'A', metric: 'm', op: '>', threshold: 1, for: '1m', severity: 'info' };\n\nasync function tempPath(): Promise<string> {\n  return join(await mkdtemp(join(tmpdir(), 'rules-')), 'alerts.yaml');\n}\n\ntest('loads rules from YAML', async () => {\n  const path = await tempPath();\n  await writeFile(path, 'rules:\\n  - id: a\\n    name: A\\n    metric: m\\n    op: \">\"\\n    threshold: 1\\n    for: 1m\\n    severity: info\\n');\n  expect((await loadRules(path))[0].id).toBe('a');\n});\n\ntest('saves rules back to YAML', async () => {\n  const path = await tempPath();\n  await saveRules([RULE], path);\n  expect(await loadRules(path)).toEqual([RULE]);\n});\n\ntest('rejects a rule whose threshold is not a number', async () => {\n  expect(validateRule({ ...RULE, threshold: NaN })).toBe('a: threshold must be a number');\n  await expect(saveRules([{ ...RULE, threshold: NaN }], await tempPath())).rejects.toThrow('threshold');\n});\n",
-  "src/server/index.ts": "import express from 'express';\nimport { listIncidents } from './incidents';\nimport { loadRules, saveRules } from './alerts';\n\nconst app = express();\napp.use(express.json());\n\napp.get('/api/incidents', async (_req, res) => {\n  res.json(await listIncidents());\n});\n\napp.get('/api/alerts', async (_req, res) => {\n  res.json(await loadRules());\n});\n\napp.put('/api/alerts', async (req, res) => {\n  try {\n    await saveRules(req.body);\n    res.sendStatus(204);\n  } catch (e) {\n    res.status(400).send(e instanceof Error ? e.message : String(e));\n  }\n});\n\napp.listen(4000, () => console.log('opsboard api on :4000'));\n",
-  "src/web/api.ts": "import type { Incident } from '../server/incidents';\nimport type { Rule } from '../server/alerts';\n\nexport async function getIncidents(): Promise<Incident[]> {\n  return (await fetch('/api/incidents')).json();\n}\n\nexport async function getRules(): Promise<Rule[]> {\n  return (await fetch('/api/alerts')).json();\n}\n\nexport async function saveRules(rules: Rule[]): Promise<void> {\n  const r = await fetch('/api/alerts', {\n    method: 'PUT',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(rules),\n  });\n  if (!r.ok) throw new Error(await r.text());\n}\n",
-  "src/web/panels/AlertRules.tsx": "import { useEffect, useState } from 'react';\nimport { getRules, saveRules } from '../api';\nimport { openInEditor } from '../openInEditor';\nimport { RULES_PATH, type Rule } from '../../server/alerts';\n\nconst SEVERITIES: Rule['severity'][] = ['info', 'warning', 'critical'];\n\nexport function AlertRules() {\n  const [rules, setRules] = useState<Rule[]>([]);\n  const [draft, setDraft] = useState<Rule[] | null>(null);\n  const [error, setError] = useState('');\n  useEffect(() => {\n    getRules().then(setRules);\n  }, []);\n\n  const update = (i: number, patch: Partial<Rule>) =>\n    setDraft((d) => d!.map((r, k) => (k === i ? { ...r, ...patch } : r)));\n\n  const save = async () => {\n    try {\n      await saveRules(draft!);\n      setRules(draft!);\n      setDraft(null);\n      setError('');\n    } catch (e) {\n      setError(e instanceof Error ? e.message : String(e));\n    }\n  };\n\n  return (\n    <section>\n      <h2>\n        Alert rules\n        {!draft && <button onClick={() => setDraft(rules)}>Edit</button>}\n        <button onClick={() => openInEditor(RULES_PATH)}>Edit YAML</button>\n      </h2>\n      <table>\n        <thead>\n          <tr><th>Rule</th><th>Condition</th><th>Severity</th></tr>\n        </thead>\n        <tbody>\n          {(draft ?? rules).map((r, i) => (\n            <tr key={r.id}>\n              <td>\n                {draft ? <input value={r.name} onChange={(e) => update(i, { name: e.target.value })} /> : r.name}{' '}\n                {/* The id stays fixed: incidents store the id of the rule that opened them,\n                    so a changed id would cut them off from their rule. */}\n                <span className=\"chip\">{r.id}</span>\n              </td>\n              <td>\n                <code>{r.metric} {r.op}</code>{' '}\n                {draft ? (\n                  <input type=\"number\" value={r.threshold}\n                    onChange={(e) => update(i, { threshold: Number(e.target.value) })} />\n                ) : (\n                  <code>{r.threshold}</code>\n                )}{' '}\n                for {r.for}\n              </td>\n              <td>\n                {draft ? (\n                  <select value={r.severity} onChange={(e) => update(i, { severity: e.target.value as Rule['severity'] })}>\n                    {SEVERITIES.map((s) => <option key={s}>{s}</option>)}\n                  </select>\n                ) : (\n                  r.severity\n                )}\n              </td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n      {draft && (\n        <footer>\n          {error && <p className=\"error\">{error}</p>}\n          <button onClick={save}>Save</button>\n          <button onClick={() => { setDraft(null); setError(''); }}>Cancel</button>\n        </footer>\n      )}\n    </section>\n  );\n}\n"
- },
- "git_log": [
-  "9d3f1a2 (HEAD -> {branch}, origin/main, main) Alert rules: in-panel editor (#57)"
- ],
- "history": [
-  {
-   "role": "user",
-   "content": "The incidents page loads every incident at once and it's getting slow. Add pagination: 50 per page, newest first, with Previous and Next."
-  },
-  {
-   "role": "assistant",
-   "content": "Let me see how incidents are listed.",
-   "tool_calls": [
-    {
-     "name": "read_file",
-     "args": {
-      "path": "src/server/incidents.ts"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": "import { primary } from './db';\n\nexport type Incident = {\n  id: number;\n  ruleId: string;\n  title: string;\n  status: 'open' | 'acknowledged' | 'resolved';\n  openedAt: string;\n};\n\nexport async function listIncidents(): Promise<Incident[]> {\n  const { rows } = await primary.query(\n    `SELECT id, rule_id AS \"ruleId\", title, status,\n            to_char(opened_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS \"openedAt\"\n       FROM incidents\n      ORDER BY opened_at DESC`,\n  );\n  return rows;\n}\n"
-  },
-  {
-   "role": "assistant",
-   "content": "",
-   "tool_calls": [
-    {
-     "name": "read_file",
-     "args": {
-      "path": "src/web/panels/Incidents.tsx"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": "import { useEffect, useState } from 'react';\nimport { getIncidents } from '../api';\nimport type { Incident } from '../../server/incidents';\n\nexport function Incidents() {\n  const [incidents, setIncidents] = useState<Incident[]>([]);\n  useEffect(() => {\n    getIncidents().then(setIncidents);\n  }, []);\n  return (\n    <section>\n      <h2>Incidents</h2>\n      <table>\n        <thead>\n          <tr><th>Opened</th><th>Title</th><th>Rule</th><th>Status</th></tr>\n        </thead>\n        <tbody>\n          {incidents.map((i) => (\n            <tr key={i.id}>\n              <td>{new Date(i.openedAt).toLocaleString()}</td>\n              <td>{i.title}</td>\n              <td><code>{i.ruleId}</code></td>\n              <td>{i.status}</td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n    </section>\n  );\n}\n"
-  },
-  {
-   "role": "assistant",
-   "content": "It's one unbounded query against the primary. I'll check the database side with platform-agent before picking a paging approach.",
-   "tool_calls": [
-    {
-     "name": "send_message",
-     "args": {
-      "to": "platform-agent",
-      "message": "The ops dashboard's incidents list will page 50 at a time, newest first. Should it read from the replica, and what statement timeout applies?"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": "platform-agent: Use the replica (OPS_DB_REPLICA_URL). Its lag is usually under 2 seconds, fine for a list. The statement timeout is 5s on both primary and replica, and deep OFFSET pages on incidents have hit it before, so page by keyset on (opened_at, id) rather than OFFSET."
-  },
-  {
-   "role": "assistant",
-   "content": "Keyset paging on (opened_at, id) against the replica, then.",
-   "tool_calls": [
-    {
-     "name": "write_file",
-     "args": {
-      "path": "src/server/incidents.ts",
-      "content": "import { replica } from './db';\n\nexport type Incident = {\n  id: number;\n  ruleId: string;\n  title: string;\n  status: 'open' | 'acknowledged' | 'resolved';\n  openedAt: string;\n};\n\nexport type Page = { items: Incident[]; next: string | null };\n\nexport const PAGE_SIZE = 50;\n\n// Keyset paging on (opened_at, id): deep OFFSET pages run into the 5s statement timeout.\nexport function pageQuery(cursor: string | null, limit = PAGE_SIZE): { text: string; values: unknown[] } {\n  const where = cursor ? 'WHERE (opened_at, id) < ($2, $3)' : '';\n  const [openedAt, id] = cursor ? cursor.split('_') : [];\n  return {\n    text: `SELECT id, rule_id AS \"ruleId\", title, status,\n                  to_char(opened_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS \"openedAt\"\n             FROM incidents ${where}\n            ORDER BY opened_at DESC, id DESC\n            LIMIT $1`,\n    values: cursor ? [limit + 1, openedAt, Number(id)] : [limit + 1],\n  };\n}\n\nexport async function listIncidents(cursor: string | null = null, limit = PAGE_SIZE): Promise<Page> {\n  const { rows } = await replica.query(pageQuery(cursor, limit));\n  const items = rows.slice(0, limit);\n  const last = items[items.length - 1];\n  return { items, next: rows.length > limit && last ? `${last.openedAt}_${last.id}` : null };\n}\n"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": "Wrote 34 lines to src/server/incidents.ts"
-  },
-  {
-   "role": "assistant",
-   "content": "",
-   "tool_calls": [
-    {
-     "name": "edit_file",
-     "args": {
-      "path": "src/server/index.ts",
-      "old": "app.get('/api/incidents', async (_req, res) => {\n  res.json(await listIncidents());\n});\n",
-      "new": "app.get('/api/incidents', async (req, res) => {\n  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;\n  res.json(await listIncidents(cursor));\n});\n"
-     }
-    },
-    {
-     "name": "edit_file",
-     "args": {
-      "path": "src/web/api.ts",
-      "old": "import type { Incident } from '../server/incidents';",
-      "new": "import type { Page } from '../server/incidents';"
-     }
-    },
-    {
-     "name": "edit_file",
-     "args": {
-      "path": "src/web/api.ts",
-      "old": "export async function getIncidents(): Promise<Incident[]> {\n  return (await fetch('/api/incidents')).json();\n}\n",
-      "new": "export async function getIncidents(cursor: string | null = null): Promise<Page> {\n  return (await fetch(`/api/incidents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)).json();\n}\n"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": "Edited src/server/index.ts (1 replacement)"
-  },
-  {
-   "role": "tool",
-   "content": "Edited src/web/api.ts (1 replacement)"
-  },
-  {
-   "role": "tool",
-   "content": "Edited src/web/api.ts (1 replacement)"
-  },
-  {
-   "role": "assistant",
-   "content": "",
-   "tool_calls": [
-    {
-     "name": "write_file",
-     "args": {
-      "path": "src/web/panels/Incidents.tsx",
-      "content": "import { useEffect, useState } from 'react';\nimport { getIncidents } from '../api';\nimport type { Page } from '../../server/incidents';\n\nexport function Incidents() {\n  const [cursor, setCursor] = useState<string | null>(null);\n  // Cursors of the pages before this one: a keyset page only knows where the next one starts.\n  const [back, setBack] = useState<(string | null)[]>([]);\n  const [page, setPage] = useState<Page>({ items: [], next: null });\n  useEffect(() => {\n    getIncidents(cursor).then(setPage);\n  }, [cursor]);\n\n  const next = () => {\n    setBack([...back, cursor]);\n    setCursor(page.next);\n  };\n  const previous = () => {\n    setCursor(back[back.length - 1]);\n    setBack(back.slice(0, -1));\n  };\n\n  return (\n    <section>\n      <h2>Incidents</h2>\n      <table>\n        <thead>\n          <tr><th>Opened</th><th>Title</th><th>Rule</th><th>Status</th></tr>\n        </thead>\n        <tbody>\n          {page.items.map((i) => (\n            <tr key={i.id}>\n              <td>{new Date(i.openedAt).toLocaleString()}</td>\n              <td>{i.title}</td>\n              <td><code>{i.ruleId}</code></td>\n              <td>{i.status}</td>\n            </tr>\n          ))}\n        </tbody>\n      </table>\n      <footer>\n        <button onClick={previous} disabled={!back.length}>Previous</button>\n        <button onClick={next} disabled={!page.next}>Next</button>\n      </footer>\n    </section>\n  );\n}\n"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": "Wrote 47 lines to src/web/panels/Incidents.tsx"
-  },
-  {
-   "role": "assistant",
-   "content": "",
-   "tool_calls": [
-    {
-     "name": "write_file",
-     "args": {
-      "path": "src/server/incidents.test.ts",
-      "content": "import { pageQuery } from './incidents';\n\ntest('the first page has no cursor condition', () => {\n  const q = pageQuery(null, 50);\n  expect(q.text).not.toContain('WHERE');\n  expect(q.values).toEqual([51]);\n});\n\ntest('the next page continues after the cursor', () => {\n  const q = pageQuery('2026-03-09T10:00:00.000Z_812', 50);\n  expect(q.text).toContain('WHERE (opened_at, id) < ($2, $3)');\n  expect(q.values).toEqual([51, '2026-03-09T10:00:00.000Z', 812]);\n});\n"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": "Wrote 13 lines to src/server/incidents.test.ts"
-  },
-  {
-   "role": "assistant",
-   "content": "",
-   "tool_calls": [
-    {
-     "name": "run_command",
-     "args": {
-      "command": "npm test -- incidents"
-     }
-    }
-   ]
-  },
-  {
-   "role": "tool",
-   "content": " PASS  src/server/incidents.test.ts\n  ✓ the first page has no cursor condition\n  ✓ the next page continues after the cursor\n\nTest Suites: 1 passed, 1 total\nTests:       2 passed, 2 total\nSnapshots:   0 total"
-  },
-  {
-   "role": "assistant",
-   "content": "Done. The incidents list now loads 50 at a time, newest first. It reads from the replica and pages by keyset on (opened_at, id), as platform-agent advised, so later pages stay fast. The panel has Previous and Next, and both new tests pass."
-  }
- ],
- "continuations": [
-  {
-   "id": "inc-c1",
-   "text": "add a status filter to the paginated incidents list: open, acknowledged, resolved"
-  },
-  {
-   "id": "inc-c2",
-   "text": "show the total incident count next to the incidents pager"
-  },
-  {
-   "id": "inc-c3",
-   "text": "make the incidents cursor opaque: base64 it so the web app doesn't depend on its format"
-  }
- ],
- "switches": [
-  {
-   "id": "inc-s1",
-   "text": "Unrelated question: which TypeScript version does this repo use?"
-  },
-  {
-   "id": "inc-s2",
-   "text": "Separate small thing first: rename the npm script 'typecheck' to 'check:types'."
-  }
- ]
 }
