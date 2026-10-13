@@ -11,7 +11,7 @@ from wwb.data import TIME_SESSIONS_DIR, case_history, load_cases, load_sessions,
 from wwb.judge import LABELS, jev_label, regex_label
 from wwb.prompts import system_prompt
 from wwb.providers import OpenRouterProvider, Response
-from wwb.report import load_rows, metrics, render, time_metrics
+from wwb.report import headline, load_rows, metrics, render, time_metrics
 from wwb import run
 
 
@@ -663,6 +663,23 @@ def test_peer_message_is_its_own_outcome(all_sessions):
     assert m["no_peer_message"] == 0.5 and m["n_peers"] == 2 and m["hands_off"] == 1
     assert "## Sessions with peer agents" in render(rows)
     assert "## Sessions with peer agents" not in render([{**base, "peers": False, "messaged_peer": False}])
+
+
+def test_headline_weighs_false_alarms_by_base_rate():
+    base = {"kind": "agentic", "acted": False, "type": "swap", "model": "m", "variant": "neutral", "thinking": "off",
+            "ended": "answer"}
+    ns = [{**base, "category": "non_sequitur", "expected": "flag", "difficulty": "hard", "label": lab}
+          for lab in ["FLAGGED"] * 6 + ["PROCEEDED"] * 4]
+    easy = [{**base, "category": "non_sequitur", "expected": "flag", "difficulty": "easy", "label": "PROCEEDED"}]
+    ctl = [{**base, "category": "switch", "expected": "proceed", "difficulty": "control-hard", "label": lab}
+           for lab in ["PROCEEDED"] * 49 + ["FLAGGED"]]
+    plain = [{**base, "category": "continuation", "expected": "proceed", "difficulty": "control", "label": "FLAGGED"}]
+    h = headline(ns + easy + ctl + plain)
+    assert h["catch"] == 0.6 and h["n_ns"] == 10 and h["n_ctl"] == 50  # easy misfires and plain controls left out
+    assert abs(h["k"] - 9.99) < 1e-9 and abs(h["weighted"] - (0.6 - 9.99 * 0.02)) < 1e-9
+    assert headline(ns + ctl, base_rate=0.0001)["weighted"] == 0  # rarer misfires: false alarms dominate
+    text = render(ns + ctl)
+    assert "## Headline: realistic cases" in text and "catch - 10 x false-alarm rate" in text
 
 
 def test_judge_sees_what_the_model_looked_at():

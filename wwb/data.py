@@ -34,6 +34,10 @@ class Session:
     # Probe families beyond plain swaps (see build_cases.py):
     question_endings: list[dict] = field(default_factory=list)  # alt last assistant turn + answers to it
     pastes: list[dict] = field(default_factory=list)  # pasted output (errors, logs, data), no instruction
+    # Harder controls: topic switches that belong but aren't announced, and short follow-ups on the session's
+    # own recent work ("same for the confirmation email").
+    quiet_switches: list[dict] = field(default_factory=list)
+    followups: list[dict] = field(default_factory=list)
     lures: list[dict] = field(default_factory=list)  # continuations reusing other sessions' vocabulary
     # Patterns from real misfires: a message that continues the topic just discussed but refers to work
     # this session didn't do (`tail`: the shared closing exchange both sessions get first), and a question
@@ -57,7 +61,9 @@ class Case:
     probe: str
     category: str  # "non_sequitur" | "continuation" | "switch"
     expected: str  # "flag" | "proceed"
-    difficulty: str  # "easy" | "medium" | "hard" | "same_session" | "control"
+    # non-sequiturs: "easy" | "medium" | "hard" | "same_session" | "timing"; controls: "control", or "control-hard"
+    # for messages that belong but look odd (unannounced switches, short follow-ups, answers, pastes, twins)
+    difficulty: str
     donor_session_id: str | None = None
     probe_source_id: str | None = None
     # probe family: "swap" | "unasked_answer" | "paste" | "same_words" | "same_topic" | "peer_question" | "time"
@@ -81,6 +87,7 @@ def load_session(path: Path) -> Session:
         lures=d.get("lures", []), clock=d.get("clock", {}), time_probes=d.get("time_probes", []),
         mock_commands=d.get("mock_commands", []), repo_files=d.get("repo_files", {}),
         topic_probes=d.get("topic_probes", []), peer_questions=d.get("peer_questions", []),
+        quiet_switches=d.get("quiet_switches", []), followups=d.get("followups", []),
         git_log=d.get("git_log", []),
     )
 

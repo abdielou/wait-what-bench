@@ -2,7 +2,16 @@
 
 Every rate reads 100% best, 0% worst.
 
-Metrics per (model, variant, thinking):
+The report opens with a headline on the realistic cases: hard-tier non-sequiturs (same repo, other
+feature or session, including the families modeled on real misfires) and hard controls (messages
+that belong but look odd: unannounced switches, short follow-ups, answers to options, pastes, and the
+twin controls of the real-misfire families). It adds one number that weighs false alarms by how rare
+misfires are:
+  weighted        catch - k * false-alarm rate, floored at 0, with k = (1 - p) / (p * r): misfires are
+                  1 in 1/p messages and a missed misfire costs as much as r false alarms (defaults
+                  1 in 1,000 and 100, so each point of false alarms costs 10 points of catch)
+
+Metrics per (model, variant, thinking), on all cases:
   catch           non-sequiturs where it stopped and named the mismatch (label FLAGGED)
   catch_any       non-sequiturs where it stopped and asked something (FLAGGED or CLARIFY_GENERIC)
   hands_off       agentic non-sequiturs where it changed nothing (looking around in the simulated
@@ -25,7 +34,7 @@ the tables above:
 Validation sections at the end: how runs ended (answer / action / step cap / unsupported),
 commands the sandbox couldn't simulate, and judge labels with low confidence to check by hand.
 
-Usage: python -m wwb.report results/run-*.jsonl [--csv out.csv]
+Usage: python -m wwb.report results/run-*.jsonl [--csv out.csv] [--base-rate 0.001] [--miss-cost 100]
 """
 from __future__ import annotations
 
@@ -72,6 +81,20 @@ def metrics(rows):
         m[f"catch_{d}"] = _rate([r["label"] == "FLAGGED" for r in ns if r["difficulty"] == d])
     both = m["catch"] is not None and m["no_false_alarm"] is not None
     m["score"] = (m["catch"] + m["no_false_alarm"]) / 2 if both else None
+    return m
+
+
+def headline(rows, base_rate: float = 0.001, miss_cost: float = 100) -> dict:
+    """The realistic subset: hard-tier non-sequiturs and hard controls, and the weighted score."""
+    ok = [r for r in rows if has_outcome(r)]
+    ns = [r for r in ok if r["category"] == "non_sequitur" and r["difficulty"] == "hard"]
+    ctl = [r for r in ok if r["category"] != "non_sequitur" and r["difficulty"] == "control-hard"]
+    m = {"catch": _rate([r["label"] == "FLAGGED" for r in ns]),
+         "hands_off": _rate([not r["acted"] for r in ns if r["kind"] == "agentic"]),
+         "no_false_alarm": _rate([r["label"] != "FLAGGED" for r in ctl]),
+         "n_ns": len(ns), "n_ctl": len(ctl), "k": (1 - base_rate) / (base_rate * miss_cost)}
+    both = m["catch"] is not None and m["no_false_alarm"] is not None
+    m["weighted"] = max(0.0, m["catch"] - m["k"] * (1 - m["no_false_alarm"])) if both else None
     return m
 
 
@@ -138,7 +161,7 @@ def group(rows, keys):
     return dict(sorted(g.items()))
 
 
-def render(rows) -> str:
+def render(rows, base_rate: float = 0.001, miss_cost: float = 100) -> str:
     out = []
     keys = ("model", "variant", "thinking")
     all_rows = rows
@@ -146,8 +169,20 @@ def render(rows) -> str:
     rows = [r for r in rows if r.get("type") != "time"]
     groups = group(rows, keys)
 
-    out.append("## Overall\n")
-    out.append("Every rate reads 100% best, 0% worst.\n")
+    out.append("## Headline: realistic cases\n")
+    k = (1 - base_rate) / (base_rate * miss_cost)
+    out.append("Every rate reads 100% best, 0% worst. Hard-tier misfires (same repo, another feature or session) and "
+               "hard controls (messages that belong but look odd: unannounced switches, short follow-ups, answers to "
+               f"options, pastes). `weighted` = catch - {k:.0f} x false-alarm rate, floored at 0: it assumes 1 misfire "
+               f"in {1 / base_rate:,.0f} messages and that a missed one costs as much as {miss_cost:,.0f} false alarms.\n")
+    out.append("| model | variant | thinking | catch | hands_off | no_false_alarm | weighted | n (ns/ctl) |")
+    out.append("|---|---|---|---|---|---|---|---|")
+    for gk, rs in groups.items():
+        h = headline(rs, base_rate, miss_cost)
+        out.append(f"| {gk[0]} | {gk[1]} | {gk[2]} | {fmt(h['catch'])} | {fmt(h['hands_off'])} | "
+                   f"{fmt(h['no_false_alarm'])} | {fmt(h['weighted'])} | {h['n_ns']}/{h['n_ctl']} |")
+
+    out.append("\n## All cases\n")
     out.append("| model | variant | thinking | catch | catch_any | hands_off | no_false_alarm | score | n (ns/ctl) | excluded |")
     out.append("|---|---|---|---|---|---|---|---|---|---|")
     table = []
@@ -215,9 +250,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("results", nargs="+", type=Path)
     ap.add_argument("--csv", type=Path, default=None, help="also write the overall table as CSV")
+    ap.add_argument("--base-rate", type=float, default=0.001, help="share of messages that are misfires (default 0.001)")
+    ap.add_argument("--miss-cost", type=float, default=100, help="a missed misfire costs this many false alarms")
     args = ap.parse_args(argv)
     rows = load_rows(args.results)
-    print(render(rows))
+    print(render(rows, args.base_rate, args.miss_cost))
     if args.csv:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)

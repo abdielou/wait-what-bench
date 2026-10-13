@@ -74,17 +74,24 @@ def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7,
                                   probe_source_id=c["id"]))
     # New families go after the swaps so the swap cases (and the rng sequence) stay unchanged.
     for t in sessions.values():
+        for x in t.quiet_switches:
+            cases.append(Case(id=f"{t.id}::quiet::{x['id']}", session_id=t.id, probe=x["text"], category="switch",
+                              expected="proceed", difficulty="control-hard", probe_source_id=x["id"]))
+        for x in t.followups:
+            cases.append(Case(id=f"{t.id}::followup::{x['id']}", session_id=t.id, probe=x["text"],
+                              category="continuation", expected="proceed", difficulty="control-hard",
+                              probe_source_id=x["id"]))
         for e in t.question_endings:
             for a in e["answers"]:
                 cases.append(Case(id=f"{t.id}::ans::{a['id']}", session_id=t.id, probe=a["text"],
-                                  category="continuation", expected="proceed", difficulty="control",
+                                  category="continuation", expected="proceed", difficulty="control-hard",
                                   probe_source_id=a["id"], type="unasked_answer", ending_id=e["id"]))
                 cases.append(Case(id=f"{t.id}::ns-ans::{a['id']}", session_id=t.id, probe=a["text"],
                                   category="non_sequitur", expected="flag", difficulty="same_session",
                                   donor_session_id=t.id, probe_source_id=a["id"], type="unasked_answer"))
         for p in t.pastes:
             cases.append(Case(id=f"{t.id}::paste::{p['id']}", session_id=t.id, probe=p["text"],
-                              category="continuation", expected="proceed", difficulty="control",
+                              category="continuation", expected="proceed", difficulty="control-hard",
                               probe_source_id=p["id"], type="paste"))
             for d in sessions.values():
                 if d.id != t.id and d.kind == "agentic":
@@ -96,7 +103,8 @@ def build(sessions: dict[str, Session], per_pair: int = 2, seed: int = 7,
         for tag, typ, x in targeted:
             tail = x.get("tail", [])
             cases.append(Case(id=f"{t.id}::{tag}::{x['id']}", session_id=t.id, probe=x["text"],
-                              category="continuation", expected="proceed", difficulty="control",
+                              category="continuation", expected="proceed",
+                              difficulty="control" if tag == "lure" else "control-hard",
                               probe_source_id=x["id"], type=typ, tail=tail))
             for target in x["targets"]:
                 d = sessions[target]
