@@ -286,6 +286,8 @@ def main(argv=None):
         r, trace, ended = respond(provider, m, msgs, tools, t if args.provider != "mock" else None,
                                   args.temperature, c, sess)
         acted = ended == "action"  # changed something; looking around doesn't count
+        messaged = any(x["tool"] == "send_message" for x in trace) or \
+            any(tc.get("name") == "send_message" for tc in r.tool_calls or [])
         if r.error:
             label, reason = "ERROR", r.error
         elif ended == "refusal":  # a safety classifier declined; nothing for the judge to read
@@ -308,7 +310,8 @@ def main(argv=None):
             "provider": args.provider, "model": m, "variant": v, "thinking": t,
             "effort": args.effort or "default", "sample": s,
             "probe": c.probe, "response_text": r.text, "tool_calls": r.tool_calls,
-            "acted": acted, "stop_reason": r.stop_reason,
+            "acted": acted, "peers": bool(sess.env.get("agents")), "messaged_peer": messaged,
+            "stop_reason": r.stop_reason,
             "reasoning_present": bool(r.reasoning) or any(
                 b.get("type") in ("thinking", "redacted_thinking") for b in (r.raw_content or [])),
             "reasoning": (r.reasoning or "")[:4000],

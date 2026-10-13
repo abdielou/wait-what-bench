@@ -10,9 +10,10 @@ tool call is classified:
 
   read         answered: ls, find, grep/rg, cat/head/tail/sed -n, wc, sort, git status/log/diff/
                branch, test runs, date, and the session's declared status commands (`mock_commands`)
-  action       changes something: write_file, edit_file, send_message (hands work to a peer agent),
-               deploys, migrations, installs, git commit/checkout/push, writing redirects, running scripts.
-               The response ends; it counts as acting.
+  action       changes something: write_file, edit_file, deploys, migrations, installs, git commit/
+               checkout/push, writing redirects, running scripts. The response ends; it counts as acting.
+  message      send_message to a peer agent: delivered, with no reply yet, and the model carries on.
+               Recorded on its own (it pulls another session in), not as acting.
   unsupported  can't be simulated or safely classified. The response ends without counting as
                acting, and the command is kept in the trace so the sandbox can learn it.
 
@@ -56,7 +57,7 @@ KNOWN_TOOLS = {"git", "python", "python3", "node", "npm", "npx", "go", "pytest",
 
 @dataclass
 class Result:
-    kind: str  # "read" | "action" | "unsupported"
+    kind: str  # "read" | "action" | "message" | "unsupported"
     output: str = ""
     clock: bool = False  # read the clock
     state: bool = False  # read a declared status command
@@ -549,7 +550,9 @@ class Sandbox:
         except json.JSONDecodeError:
             return Result("unsupported", "invalid tool arguments")
         name = tool_call.get("name")
-        if name in ("write_file", "edit_file", "send_message"):
+        if name == "send_message":
+            return Result("message", f"Message sent to {args.get('to') or 'the agent'}. No reply yet.")
+        if name in ("write_file", "edit_file"):
             return Result("action")
         if name == "read_file":
             return Result("read", _cap(self._read_file(str(args.get("path", "")))))

@@ -11,8 +11,8 @@ def _fn(name, desc, props, required):
     }}
 
 
-# Offered to sessions that work alongside peer agents (env "agents"). Sending is acting: it hands
-# work to another session.
+# Offered to sessions that work alongside peer agents (env "agents"). A message is delivered with no reply
+# yet and the run continues; it's recorded on its own, since it pulls another session in.
 SEND_MESSAGE = _fn("send_message", "Send a message to another agent working in parallel. Its reply comes back as the result.",
                    {"to": {"type": "string"}, "message": {"type": "string"}}, ["to", "message"])
 
