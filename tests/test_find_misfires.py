@@ -118,6 +118,44 @@ def test_skips_stop_and_counts_shell_changes(tmp_path):
     assert len(hit["tool_calls"]) == 3 and len(hit["changing_commands"]) == 1 and hit["project"] == "shopfront"
 
 
+def queued(prompt, mode="prompt", kind="human"):
+    """A message that arrived while the assistant was working, as Claude Code saves it."""
+    return line("attachment", None, attachment={"type": "queued_command", "prompt": prompt, "commandMode": mode,
+                                                 "origin": {"kind": kind}})
+
+
+def test_counts_messages_typed_while_it_works_and_skips_notifications(tmp_path):
+    done = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command " \
+           "\"wrong session check\" completed</summary>\n</task-notification>"
+    rows = transcript()[:6] + [
+        line("user", "make the tax rate 8% for NY", origin={"kind": "human"}),  # went to the wrong session
+        line("assistant", [{"type": "tool_use", "id": "t2", "name": "Edit",
+                            "input": {"file_path": "/Users/me/code/shopfront/src/lib/tax.ts", "old_string": "a", "new_string": "b"}}]),
+        line("user", done, origin={"kind": "task-notification"}),
+        line("user", done),  # older transcripts don't say where a line came from
+        queued(done, mode="task-notification", kind="task-notification"),
+        queued("[Subagent hand-back] it went to the wrong session, sorry", kind="peer"),
+        line("user", [{"type": "tool_result", "tool_use_id": "t2", "content": "ok"}]),
+        queued([{"type": "image", "source": {"data": "A" * 800}},
+                {"type": "text", "text": "stop, wrong session, that was for the billing repo"}]),
+    ]
+    assert [fm.typed_text(x) for x in rows[8:12]] == [None] * 4
+    project = tmp_path / "projects" / "-Users-me-code-shopfront"
+    project.mkdir(parents=True)
+    (project / f"{SESSION}.jsonl").write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+    out = tmp_path / "out"
+    assert fm.main(["--root", str(tmp_path / "projects"), "--out", str(out)]) == 0
+    hit, = json.loads((out / "index.json").read_text())
+    assert hit["correction"] == "stop, wrong session, that was for the billing repo"
+    assert hit["misdirected"] == "make the tax rate 8% for NY" and len(hit["edited_files"]) == 1
+    md = (out / f"01-shopfront-{SESSION[:8]}.md").read_text()
+    assert "**you, while it was working:** stop, wrong session" in md and "task-id" not in md
+    states = fm.to_score(rows, "shopfront")
+    assert [s["latest_user_message"] for _, s in states][-1] == "stop, wrong session, that was for the billing repo"
+    assert not any("task-notification" in s["latest_user_message"] or "hand-back" in s["latest_user_message"]
+                   for _, s in states)
+
+
 def test_changing_commands():
     changes = ["sed -i 's/a/b/' src/export.rs && grep -n b src/export.rs", "cargo fmt --all && cargo fmt --all --check",
                "git commit -am wip && git push", "cd build && rm -rf out", "echo hi > notes.txt", "npm install lodash",
@@ -170,6 +208,7 @@ def test_classify_ranks_messages_and_redacts_what_it_sends(tmp_path, monkeypatch
                 "probabilities": {"DOESNT_FOLLOW": 0.91 if odd else 0.04, "FOLLOWS": 0.09 if odd else 0.96}}, None
     usage = iter([1.00, 1.01])
     monkeypatch.setattr(fm, "decide", fake_decide)
+    monkeypatch.setattr(fm, "key_info", lambda key: {"usage": 1.00, "limit": 2, "limit_remaining": 1.00})
     monkeypatch.setattr(fm, "key_usage", lambda key: next(usage))
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     root, out = write_transcript(tmp_path), tmp_path / "wwb-misfires"
@@ -186,6 +225,7 @@ def test_classify_ranks_messages_and_redacts_what_it_sends(tmp_path, monkeypatch
 def test_classify_asks_first_and_stops_on_a_key_error(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(fm, "decide", lambda key, state, **k: (calls.append(1), (None, "HTTP 403: Key limit exceeded"))[1])
+    monkeypatch.setattr(fm, "key_info", lambda key: None)  # OpenRouter unreachable: the first call says why
     monkeypatch.setattr(fm, "key_usage", lambda key: None)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     root = write_transcript(tmp_path)
@@ -193,3 +233,19 @@ def test_classify_asks_first_and_stops_on_a_key_error(tmp_path, monkeypatch):
     assert fm.main(["--root", str(root), "--out", str(tmp_path / "a"), "--classify"]) == 1 and not calls  # said no
     assert fm.main(["--root", str(root), "--out", str(tmp_path / "b"), "--classify", "--yes"]) == 0
     assert "stopped: HTTP 403" in (tmp_path / "b" / "suspects.md").read_text()
+
+
+
+def test_classify_checks_the_key_before_asking(tmp_path, monkeypatch, capsys):
+    def never(*a, **k):
+        raise AssertionError("a bad key must stop it before it asks or sends")
+    monkeypatch.setattr(fm, "decide", never)
+    monkeypatch.setattr("builtins.input", never)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "stale-key")
+    root = write_transcript(tmp_path)
+    for info, said in ((401, "doesn't recognize the key"), ({"usage": 5.0, "limit": 5, "limit_remaining": 0}, "used up")):
+        monkeypatch.setattr(fm, "key_info", lambda key, info=info: info)
+        assert fm.main(["--root", str(root), "--out", str(tmp_path / "out"), "--classify"]) == 1
+        err = capsys.readouterr().err
+        assert said in err and "openrouter.ai/settings/keys" in err and "$env:OPENROUTER_API_KEY" in err
+    assert fm.key_problem({"usage": 0.2, "limit": None, "limit_remaining": None}) is None and fm.key_problem(None) is None
