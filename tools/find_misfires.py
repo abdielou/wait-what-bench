@@ -24,6 +24,22 @@ Usage (on Windows, type py instead of python3):
   python3 find_misfires.py --pattern "oops,? not you"   # add phrases you use (regex, case-insensitive)
   python3 find_misfires.py --root PATH --root PATH2     # only these transcripts folders
 
+Optional, off by default: score every message with a model (--classify)
+  The search above only finds misfires you called out. --classify also scores every message you typed
+  with TypeSafe's Jev, a fast decision model, asking whether it follows from its session, and writes the
+  most suspicious ones to suspects.md, to read yourself. This sends your messages out of your machine:
+  for each one, the session's first message, your previous message, the assistant's last reply and the
+  message itself go to OpenRouter (and on to TypeSafe), secrets redacted as above but code and names
+  kept. The default search sends nothing anywhere. Needs OPENROUTER_API_KEY.
+
+  python3 find_misfires.py --estimate                   # count what --classify would send and its cost; sends nothing
+  python3 find_misfires.py --classify --sample 20       # try it on 20 random sessions first
+  python3 find_misfires.py --classify --max-usd 5       # everything, stopping if it costs more than $5
+
+  Jev costs $0.042 per million input tokens on OpenRouter (output is free), so the estimate is the
+  input it would send times that price. Misfires are rare, so most top-ranked messages will be fine:
+  read the list, don't trust it.
+
 Standard library only, Python 3.8 or later. Reads transcripts, never changes them.
 """
 from __future__ import annotations
@@ -31,9 +47,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import sys
+import time
+import urllib.error
+import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 DEFAULT_PATTERNS = [
@@ -244,6 +265,98 @@ def what_happened(lines: list, start: int, end: int) -> dict:
             "assistant_text": texts}
 
 
+# --classify: Jev on OpenRouter's Decisions API, one typed question per message.
+JEV_MODEL = "typesafe/jev-1.13"
+JEV_PRICE_PER_TOKEN = 0.042e-6  # USD per input token on OpenRouter; output is free
+DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+KEY_URL = "https://openrouter.ai/api/v1/auth/key"
+OVERHEAD_TOKENS = 250  # the question and its criteria, sent with every message
+QUESTION = {"fits": {
+    "type": "choice",
+    "instructions": ("A developer runs several AI coding sessions at once and sometimes types a message into the "
+                     "wrong one. Given what this session is about and its last exchange, does the latest message "
+                     "the developer typed follow from this session?"),
+    "criteria": {
+        "FOLLOWS": "it continues, answers or reacts to the session so far, or asks about the same work or project",
+        "NEW_TOPIC": "it starts something new that plausibly belongs in this session or project, or says it is a new topic",
+        "DOESNT_FOLLOW": ("it refers to work, files, features or a conversation this session hasn't had, answers a "
+                          "question nobody asked, or reads like it was meant for a different session"),
+    },
+}}
+
+
+def to_score(lines: list, project: str) -> list:
+    """(line index, what Jev sees) for every message you typed after the first one in a session: the
+    session's first message, your previous message, the assistant's last reply and the message itself,
+    each shortened and with secrets redacted."""
+    task = prev = reply = None
+    out = []
+    for i, line in enumerate(lines):
+        if isinstance(line, dict) and line.get("type") == "assistant" and not line.get("isSidechain"):
+            text = " ".join(b.get("text", "") for b in blocks(line) if b.get("type") == "text").strip()
+            reply = text or reply
+            continue
+        text = typed_text(line)
+        if text is None or is_interrupt(line) or _CONTROL.match(text):
+            continue
+        if task is None:
+            task = text
+        else:
+            out.append((i, redact({
+                "project": project, "branch": line.get("gitBranch") or "", "session_first_message": short(task, 800),
+                "previous_user_message": short(prev or "", 600), "assistant_last_reply": short(reply or "", 1200),
+                "latest_user_message": short(text, 1500)})))
+        prev, reply = text, None
+    return out
+
+
+def tokens(state: dict) -> float:
+    """Rough input size of one Jev call: about 3.5 characters per token, plus the question."""
+    return len(json.dumps(state, ensure_ascii=False)) / 3.5 + OVERHEAD_TOKENS
+
+
+def decide(key: str, state: dict, model: str = JEV_MODEL, retries: int = 4) -> tuple:
+    """Jev's answer {"choice", "confidence", "probabilities"} for one message, or (None, error). A key
+    problem (401/402/403) isn't retried."""
+    body = json.dumps({"model": model, "state": state, "questions": QUESTION}).encode()
+    err = None
+    for attempt in range(retries):
+        req = urllib.request.Request(DECISIONS_URL, data=body, method="POST", headers={
+            "Authorization": f"Bearer {key}", "Content-Type": "application/json", "X-Title": "wait-what-bench find_misfires"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                payload = json.loads(r.read())
+            answer = (payload.get("answers") or {}).get("fits")
+            if isinstance(answer, dict) and answer.get("choice"):
+                return answer, None
+            err = f"unexpected answer: {json.dumps(payload)[:200]}"
+        except urllib.error.HTTPError as e:
+            err = f"HTTP {e.code}: {e.read().decode(errors='replace')[:300]}"
+            if e.code in (401, 402, 403):
+                return None, err
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            err = f"{type(e).__name__}: {e}"
+        time.sleep(min(30, 2 ** attempt))
+    return None, err
+
+
+def key_usage(key: str):
+    """What the key has spent so far in USD, from OpenRouter, or None."""
+    try:
+        req = urllib.request.Request(KEY_URL, headers={"Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return float(json.loads(r.read())["data"]["usage"])
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def suspicion(answer: dict) -> float:
+    probs = answer.get("probabilities") or {}
+    if "DOESNT_FOLLOW" in probs:
+        return float(probs["DOESNT_FOLLOW"])
+    return 1.0 if answer.get("choice") == "DOESNT_FOLLOW" else 0.0
+
+
 def default_roots() -> list:
     """Every transcripts folder on this machine, each once."""
     configs = [Path.home() / ".claude"]
@@ -259,6 +372,90 @@ def default_roots() -> list:
     return roots
 
 
+def parse_lines(raw: str) -> list:
+    lines = []
+    for s in raw.splitlines():
+        try:
+            lines.append(json.loads(s))
+        except ValueError:
+            lines.append(None)
+    return lines
+
+
+def read_lines(path: Path):
+    try:
+        return parse_lines(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
+
+
+def classify(scoring: list, out: Path, args) -> list | None:
+    """Score each message with Jev and write the most suspicious to suspects.md / suspects.json."""
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        print("--classify needs OPENROUTER_API_KEY set to an OpenRouter key.", file=sys.stderr)
+        return None
+    if not args.yes:
+        print("This sends each of those messages, with its session's first message, your previous message and the "
+              "assistant's last reply (secrets redacted, code and names kept), to OpenRouter and TypeSafe.")
+        try:
+            answer = input("Send them? [y/N] ")
+        except EOFError:  # no terminal to ask: don't send
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Nothing sent.")
+            return None
+    before = key_usage(key)
+    results, errors, stopped, sent_tokens = [], [], None, 0.0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = [(item, ex.submit(decide, key, item[2])) for item in scoring]
+        for k, (item, fut) in enumerate(futures, 1):
+            answer, err = fut.result()
+            sent_tokens += tokens(item[2])
+            if err:
+                errors.append(err)
+                if err.startswith(("HTTP 401", "HTTP 402", "HTTP 403")):
+                    stopped = err
+            else:
+                results.append((suspicion(answer), answer.get("choice"), item))
+            spent = None
+            if k % 100 == 0 and not stopped:  # what the key has spent, or the estimate when OpenRouter won't say
+                now = key_usage(key) if before is not None else None
+                spent = now - before if now is not None else sent_tokens * JEV_PRICE_PER_TOKEN
+                print(f"  {k:,}/{len(futures):,} scored, ${spent:.2f} so far")
+            if stopped or (spent is not None and spent >= args.max_usd):
+                stopped = stopped or f"reached --max-usd {args.max_usd}"
+                for _, f in futures[k:]:
+                    f.cancel()
+                break
+    after = key_usage(key)
+    spent = None if before is None or after is None else after - before
+    results.sort(key=lambda r: -r[0])
+    top = []
+    for score, choice, (path, i, state, did) in results[:args.top]:
+        top.append({"score": round(score, 3), "choice": choice, "file": str(path), "line": i, **state, **did})
+    (out / "suspects.json").write_text(json.dumps(top, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    md = ["# Messages Jev found least likely to follow from their session", "",
+          f"Scored {len(results):,} of {len(scoring):,} messages" + (f" (stopped: {stopped})" if stopped else "") +
+          (f"; cost ${spent:.2f}" if spent is not None else "") + ". Most of these are fine: misfires are rare, so "
+          "read each one. `changed` is what the assistant did before your next message.", ""]
+    for n, t in enumerate(top, 1):
+        changed = f"{t['edited_files']} edit(s), {t['changing_commands']} changing command(s)"
+        md += [f"## {n}. {t['score']:.2f} {t['choice']} · {t['project']} ({t['branch'] or 'no branch'}) · {changed}", "",
+               f"- transcript: `{t['file']}` line {t['line'] + 1}",
+               f"- session's first message: \"{short(t['session_first_message'], 200)}\"",
+               f"- your previous message: \"{short(t['previous_user_message'], 200)}\"",
+               f"- assistant's last reply: \"{short(t['assistant_last_reply'], 300)}\"",
+               f"- **this message:** \"{short(t['latest_user_message'], 500)}\"", ""]
+    (out / "suspects.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    print(f"Scored {len(results):,} messages with Jev" + (f" for ${spent:.2f}" if spent is not None else "") +
+          (f" ({len(errors)} failed)" if errors else "") + (f"; stopped: {stopped}" if stopped else "") + ".")
+    for t in top[:10]:
+        print(f"  {t['score']:.2f}  {t['project'][:20]:<20}  \"{short(t['latest_user_message'], 70)}\"")
+    print(f"The {len(top)} most suspicious are in {out / 'suspects.md'}.")
+    return top
+
+
 def slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-")[:40] or "session"
 
@@ -271,6 +468,16 @@ def main(argv=None) -> int:
     ap.add_argument("--pattern", action="append", default=[], help="extra phrase to look for (regex, case-insensitive)")
     ap.add_argument("--context", type=int, default=40, help="transcript lines shown before each misdirected message")
     ap.add_argument("--from-start", action="store_true", help="dump each transcript from the start, not the last compaction")
+    ap.add_argument("--estimate", action="store_true", help="count what --classify would send and what it would cost, "
+                    "then stop; sends nothing")
+    ap.add_argument("--classify", action="store_true", help="also score every message you typed with Jev on OpenRouter "
+                    "(sends your messages out of your machine, see above; needs OPENROUTER_API_KEY)")
+    ap.add_argument("--sample", type=int, default=None, help="--classify/--estimate: only this many random transcripts")
+    ap.add_argument("--session", action="append", default=[], help="--classify/--estimate: only this session "
+                    "(an id or its start, as in the transcript file name), repeat for several")
+    ap.add_argument("--max-usd", type=float, default=5.0, help="--classify: stop once it has cost this much (default 5)")
+    ap.add_argument("--top", type=int, default=50, help="--classify: how many of the most suspicious messages to list")
+    ap.add_argument("--yes", action="store_true", help="--classify: don't ask before sending")
     args = ap.parse_args(argv)
 
     roots = list(dict.fromkeys(r.expanduser() for r in args.root)) if args.root else default_roots()
@@ -283,6 +490,32 @@ def main(argv=None) -> int:
     prefilter = re.compile("|".join(f"(?:{p.pattern})" for p in patterns), re.I)
     found = {r: sorted(r.rglob("*.jsonl")) for r in roots}
     files = [path for r in roots for path in found[r]]
+
+    scoring = []  # (path, line index, what Jev sees, what the assistant did before your next message)
+    if args.classify or args.estimate:
+        pool = [f for f in files if not args.session or any(f.stem.startswith(x) for x in args.session)]
+        if args.sample:
+            pool = random.Random(0).sample(pool, min(args.sample, len(pool)))
+        for path in pool:
+            lines = read_lines(path)
+            if lines is None:
+                continue
+            start = next((x["cwd"] for x in lines if isinstance(x, dict) and x.get("cwd")), None)
+            project = re.split(r"[\\/]", str(start or path.parent.name).rstrip("\\/"))[-1]
+            states = to_score(lines, project)
+            for k, (i, state) in enumerate(states):
+                nxt = states[k + 1][0] if k + 1 < len(states) else len(lines)
+                did = what_happened(lines, i, nxt)
+                scoring.append((path, i, state, {"edited_files": len(did["edited_files"]),
+                                                 "changing_commands": len(did["changing_commands"])}))
+        n_tokens = sum(tokens(s) for _, _, s, _ in scoring)
+        sessions = len({p for p, _, _, _ in scoring})
+        cost = n_tokens * JEV_PRICE_PER_TOKEN
+        print(f"--classify would send {len(scoring):,} messages from {sessions:,} sessions "
+              f"({len(pool):,} transcripts{' sampled' if args.sample else ''}): about {n_tokens / 1e6:.1f}M input tokens, "
+              f"about ${cost:.2f} at Jev's ${JEV_PRICE_PER_TOKEN * 1e6:.3f} per million.")
+        if args.estimate:
+            return 0
     out = args.out.expanduser()
     out.mkdir(parents=True, exist_ok=True)
 
@@ -295,12 +528,7 @@ def main(argv=None) -> int:
             continue
         if not prefilter.search(raw):
             continue
-        lines = []
-        for s in raw.splitlines():
-            try:
-                lines.append(json.loads(s))
-            except ValueError:
-                lines.append(None)
+        lines = parse_lines(raw)
         for hit, prev, phrase in find_hits(lines, patterns):
             n += 1
             focus = prev if prev is not None else hit
@@ -363,6 +591,8 @@ def main(argv=None) -> int:
                        f"{cell(e['misdirected'])} | {did} |")
     (out / "index.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
     (out / "index.json").write_text(json.dumps(index, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    if args.classify and scoring and classify(scoring, out, args) is None:
+        return 1
 
     archive = out.parent / (out.name + ".zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:

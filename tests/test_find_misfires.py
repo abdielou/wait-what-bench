@@ -128,3 +128,68 @@ def test_changing_commands():
              "grep -n \"rm \" Makefile", "git log --format='%h -> %s' | head", "npm test", "ls -la; git tag -l"]
     assert [c for c in changes if not fm.changing(c)] == []
     assert [c for c in reads if fm.changing(c)] == []
+
+
+def write_transcript(tmp_path):
+    project = tmp_path / "projects" / "-Users-me-code-shopfront"
+    project.mkdir(parents=True)
+    lines = transcript()[:10] + [line("user", "token for staging is sk-or-v1-0123456789abcdef0123456789abcdef, add it to .env")]
+    (project / f"{SESSION}.jsonl").write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+    return tmp_path / "projects"
+
+
+def test_to_score_gives_jev_the_session_and_the_last_exchange():
+    states = fm.to_score(transcript(), "shopfront")
+    by_text = {s["latest_user_message"]: (i, s) for i, s in states}
+    assert "add a CSV export to the admin orders page" not in by_text  # the first message is the session's task
+    i, s = by_text["make the tax rate 8% for NY"]
+    assert s["session_first_message"] == "add a CSV export to the admin orders page"
+    assert s["assistant_last_reply"] == "The route is in place." and s["branch"] == "feat/admin-csv-export"
+    assert s["previous_user_message"] == "add a CSV export to the admin orders page"
+    assert all("[Request interrupted" not in t for t in by_text)
+
+
+def test_estimate_counts_and_prices_without_sending(tmp_path, monkeypatch, capsys):
+    def no_network(*a, **k):
+        raise AssertionError("--estimate must not send anything")
+    monkeypatch.setattr(fm.urllib.request, "urlopen", no_network)
+    root = write_transcript(tmp_path)
+    assert fm.main(["--root", str(root), "--out", str(tmp_path / "out"), "--estimate"]) == 0
+    said = capsys.readouterr().out
+    assert "--classify would send 2 messages from 1 sessions" in said and "$0.00" in said
+    assert not (tmp_path / "out").exists()  # writes nothing either
+
+
+def test_classify_ranks_messages_and_redacts_what_it_sends(tmp_path, monkeypatch):
+    sent = []
+
+    def fake_decide(key, state, model=fm.JEV_MODEL, retries=4):
+        sent.append(state)
+        odd = "tax rate" in state["latest_user_message"]
+        return {"choice": "DOESNT_FOLLOW" if odd else "FOLLOWS",
+                "probabilities": {"DOESNT_FOLLOW": 0.91 if odd else 0.04, "FOLLOWS": 0.09 if odd else 0.96}}, None
+    usage = iter([1.00, 1.01])
+    monkeypatch.setattr(fm, "decide", fake_decide)
+    monkeypatch.setattr(fm, "key_usage", lambda key: next(usage))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    root, out = write_transcript(tmp_path), tmp_path / "wwb-misfires"
+    assert fm.main(["--root", str(root), "--out", str(out), "--classify", "--yes"]) == 0
+    top = json.loads((out / "suspects.json").read_text())
+    assert top[0]["latest_user_message"] == "make the tax rate 8% for NY" and top[0]["score"] == 0.91
+    assert top[0]["edited_files"] == 1  # the assistant edited tax.ts before the next message
+    assert all("sk-or-v1-" not in json.dumps(s) for s in sent)  # secrets never leave
+    assert "cost $0.01" in (out / "suspects.md").read_text()
+    with zipfile.ZipFile(tmp_path / "wwb-misfires.zip") as z:
+        assert "wwb-misfires/suspects.md" in z.namelist()
+
+
+def test_classify_asks_first_and_stops_on_a_key_error(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(fm, "decide", lambda key, state, **k: (calls.append(1), (None, "HTTP 403: Key limit exceeded"))[1])
+    monkeypatch.setattr(fm, "key_usage", lambda key: None)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    root = write_transcript(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert fm.main(["--root", str(root), "--out", str(tmp_path / "a"), "--classify"]) == 1 and not calls  # said no
+    assert fm.main(["--root", str(root), "--out", str(tmp_path / "b"), "--classify", "--yes"]) == 0
+    assert "stopped: HTTP 403" in (tmp_path / "b" / "suspects.md").read_text()

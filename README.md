@@ -136,6 +136,16 @@ python3 tools/find_misfires.py --pattern "not you,? sorry"   # add phrases you u
 py tools\find_misfires.py                                # on Windows
 ```
 
+That search only finds the misfires you called out. To also catch the ones you didn't (you noticed and quietly undid it, or never noticed), `--classify` scores every message you typed with TypeSafe's Jev, a fast decision model, asking whether it follows from its session, and lists the most suspicious in `suspects.md` for you to read. It's off by default because it sends your messages out of your machine: for each message, the session's first message, your previous message, the assistant's last reply and the message itself go to OpenRouter, and on to TypeSafe. Secrets are redacted as above, but code, file names and project names are kept. The default search sends nothing anywhere. Check what it would send and cost first:
+
+```bash
+python3 tools/find_misfires.py --estimate               # messages, tokens and cost; sends nothing
+python3 tools/find_misfires.py --classify --sample 20   # try it on 20 random sessions (asks before sending)
+python3 tools/find_misfires.py --classify --max-usd 5   # every session, stopping if it reaches $5
+```
+
+Jev costs $0.042 per million input tokens on OpenRouter, and output is free. A message with its context is about 700 tokens, so 10,000 messages cost about $0.30. Misfires are rare, about 1 in 1,000 messages, so most of the top-ranked ones will be fine: treat the list as a reading list, not a verdict. It needs `OPENROUTER_API_KEY`.
+
 `wwb/replay.py` then rebuilds what the model saw just before each misdirected message (the branch it was on, tool results, the reminders and instruction files Claude Code rendered), sends that message to a model, and records the first reply. Tool calls in the reply aren't run. Real transcripts are private: keep them and the replies out of the repo (the default output, `results/replays/`, is git-ignored), and label replies by hand rather than through the OpenRouter judge.
 
 ```bash
