@@ -7,6 +7,7 @@ official SDK, imported only when it's used: pip install -e '.[anthropic]'.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import random
@@ -99,7 +100,8 @@ class OpenRouterProvider:
                 last_err = f"HTTP {e.code}: {detail}"
                 if e.code not in (408, 429, 500, 502, 503, 504):
                     break
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException,
+                    json.JSONDecodeError) as e:  # a dropped connection is retried like a timeout
                 last_err = f"{type(e).__name__}: {e}"
             time.sleep(min(60, 2 ** attempt + random.random()))
         return None, last_err

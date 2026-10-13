@@ -8,12 +8,13 @@ Each bar is one setting and splits its hard-tier misfires three ways:
                   around in the simulated workspace
   changed files   started the work, including runs that noted the mismatch and did it anyway
 Caught plus went along is hands_off. Next to each bar: false alarms on the hard controls and the
-weighted score, both as in wwb.report. Rows without an outcome are left out, as in the report.
+weighted score, both as in wwb.report. Rows without an outcome are left out, and replies with a hand
+label count with it, as in the report.
 
 The SVG draws its own background and follows the viewer's light or dark mode.
 
 Usage: python -m wwb.chart results/*.jsonl [--out docs/results-hard.svg] [--markdown]
-                           [--base-rate 0.001] [--miss-cost 100]
+                           [--base-rate 0.001] [--miss-cost 100] [--judge-only]
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import argparse
 from html import escape
 from pathlib import Path
 
+from . import agreement
 from .report import group, has_outcome, headline, load_rows
 
 VARIANTS = ("neutral", "autonomous", "non_sequitur_check")
@@ -174,8 +176,12 @@ def main(argv=None):
     ap.add_argument("--markdown", action="store_true", help="also print the counts as a markdown table")
     ap.add_argument("--base-rate", type=float, default=0.001, help="share of messages that are misfires (default 0.001)")
     ap.add_argument("--miss-cost", type=float, default=100, help="a missed misfire costs this many false alarms")
+    ap.add_argument("--judge-only", action="store_true", help="ignore data/hand_labels.jsonl: the judge's labels only")
     args = ap.parse_args(argv)
-    entries = tally([r for r in load_rows(args.results) if r.get("type") != "time"], args.base_rate, args.miss_cost)
+    rows = [r for r in load_rows(args.results) if r.get("type") != "time"]
+    if not args.judge_only:
+        agreement.apply(rows, agreement.load())
+    entries = tally(rows, args.base_rate, args.miss_cost)
     if not entries:
         raise SystemExit("no hard-tier misfires in these results")
     args.out.parent.mkdir(parents=True, exist_ok=True)

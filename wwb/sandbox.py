@@ -767,7 +767,7 @@ class Sandbox:
                 continue
             words.append((t, quoted))
             i += 1
-        while words and not words[0][1] and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0][0]):
+        while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0][0], re.S):  # VAR=value cmd
             words.pop(0)
         while words and words[0][0] in ("sudo", "time", "command", "nice", "nohup", "timeout"):
             if words.pop(0)[0] == "timeout":  # timeout [-s SIG] [-k DUR] DURATION command...
@@ -827,7 +827,8 @@ class Sandbox:
         raise Unsupported(f"unsupported command: {prog}")
 
     def _expand_vars(self, seg: str) -> str:
-        """$NAME and ${NAME} outside single quotes. Only a login shell's variables are set."""
+        """$NAME, ${NAME}, ${NAME:-word} and friends, outside single quotes. Only a login shell's variables
+        are set."""
         out, quote, i, n = [], None, 0, len(seg)
         while i < n:
             c = seg[i]
@@ -840,6 +841,20 @@ class Sandbox:
             elif c in "'\"":
                 quote = None if quote == c else (quote or c)
             elif c == "$":
+                m = re.match(r"\$\{(#?)([A-Za-z_]\w*)(:?[-+=?])?([^}]*)\}", seg[i:])
+                if m and (m.group(3) or not m.group(4)):  # ${#NAME}, ${NAME:-word}, ${NAME+word}...
+                    hash_, name, op, word = m.groups()
+                    val, isset = self.env.get(name, ""), name in self.env
+                    full = bool(val) if op and op.startswith(":") else isset
+                    if hash_:
+                        val = str(len(val))
+                    elif op and op[-1] in "-=?":
+                        val = val if full else word
+                    elif op and op[-1] == "+":
+                        val = word if full else ""
+                    out.append(val)
+                    i += m.end()
+                    continue
                 m = re.match(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)|([0-9?#@*]))", seg[i:])
                 if m:
                     name = m.group(1) or m.group(2) or m.group(3)

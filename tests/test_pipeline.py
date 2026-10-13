@@ -788,6 +788,13 @@ def test_judge_agreement_with_hand_labels():
     results[2] = dict(results[2], response_text="Done, and more.")  # a different reply to the same case isn't matched
     assert [h["case_id"] for _, h in agreement.matched(results, hand)] == ["a", "b"]
     assert "The judge's label is one the reviewer accepts in 2 of 2 replies" in render(results, hand=hand)
+    # the report and chart count the reviewer's own label (the first listed); a run that acted can't be a catch
+    applied = [dict(r) for r in results] + [dict(results[0], case_id="a2", acted=True)]
+    hand2 = hand + [dict(hand[0], case_id="a2")]
+    assert agreement.apply(applied, hand2) == 3
+    assert [r["label"] for r in applied] == ["FLAGGED", "FLAGGED", "PROCEEDED", "PROCEEDED_WITH_NOTE"]
+    assert applied[1]["judge_label"] == "CLARIFY_GENERIC" and "judge_label" not in applied[2]
+    assert "The judge's label is one the reviewer accepts in 2 of 2 replies" in render(applied[:3], hand=hand)
     for h in agreement.load():  # the committed set is self-contained and only uses known labels
         assert set(h["hand"]) <= set(LABELS) and h["judge_label"] in LABELS
         assert all(h.get(k) is not None for k in ("summary", "probe", "response_text", "trace", "acted", "note"))
@@ -856,3 +863,23 @@ def test_sandbox_other_branches_find_exec_and_alembic(sessions):
     assert out(rpt, "grep -c a <<'X'\nabc\nxyz\naaa\nX\necho after") == "2\nafter"
     assert out(rpt, "wc -w <<< 'one two'") == "2"
     assert out(rpt, "printf 'ab\\r\\n' | od -c") == "0000000   a   b  \\r  \\n\n0000004"
+    assert out(rpt, 'echo "${NOPE:-unset} ${#USER} ${HOME:+set}"') == "unset 3 set"
+    assert out(rpt, 'FOO="a b" ls alembic') == "env.py\nversions"  # an assignment before the command
+
+
+def test_judge_retries_a_dropped_connection(monkeypatch):
+    import http.client
+    import io
+    import urllib.request
+    calls = []
+
+    def urlopen(req, timeout):
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise http.client.RemoteDisconnected("Remote end closed connection without response")
+        return io.BytesIO(b'{"ok": true}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr("wwb.providers.time.sleep", lambda s: None)
+    payload, err = OpenRouterProvider(api_key="k")._post("https://example.invalid/x", {})
+    assert payload == {"ok": True} and err is None and len(calls) == 2

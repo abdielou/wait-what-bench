@@ -1,10 +1,13 @@
 """How often the judge agrees with hand labels.
 
-data/hand_labels.jsonl holds replies from validation runs on the synthetic sessions, each labeled by a reviewer
-who read the session, the probe, what the model did and saw first, and its reply. `hand` lists every label the
-reviewer accepts (some replies are fairly FLAGGED or CLARIFY_GENERIC), and `note` says why. Rows carry
-everything a judge sees, so a judge can be scored on them again after the cases change. The file is public:
-replies to real transcripts never go in it.
+data/hand_labels.jsonl holds replies from runs on the synthetic sessions, each labeled by a reviewer who read
+the session, the probe, what the model did and saw first, and its reply. `hand` lists every label the reviewer
+accepts, the reviewer's own first (some replies are fairly FLAGGED or CLARIFY_GENERIC), and `note` says why.
+Rows carry everything a judge sees, so a judge can be scored on them again after the cases change. The file is
+public: replies to real transcripts never go in it.
+
+The report and the chart use the reviewer's label for any reply that has one (`apply`); the judge's stays in
+`judge_label`.
 
   python -m wwb.agreement                  # the judge labels stored with each row
   python -m wwb.agreement --rejudge jev    # label every row again with Jev on OpenRouter, then compare
@@ -41,6 +44,20 @@ def agreement(rows: list[dict], labels: list[str]) -> dict:
             "missed_catches": sum(lab != "FLAGGED" and r["hand"] == ["FLAGGED"] for r, lab in off),
             "false_catches": sum(lab == "FLAGGED" and "FLAGGED" not in r["hand"] for r, lab in off),
             "disagreements": off}
+
+
+def apply(results: list[dict], hand: list[dict]) -> int:
+    """Give each hand-labeled reply the reviewer's own label, keeping the judge's in `judge_label`. As with the
+    judge, a run that changed something can't be a catch or a clarifying question. Returns how many rows changed."""
+    n = 0
+    for r, h in matched(results, hand):
+        lab = h["hand"][0]
+        if r.get("acted") and lab in ("FLAGGED", "CLARIFY_GENERIC"):
+            lab = "PROCEEDED_WITH_NOTE" if lab == "FLAGGED" else "PROCEEDED"
+        r.setdefault("judge_label", r["label"])
+        r["label"], r["hand_labeled"] = lab, True
+        n += 1
+    return n
 
 
 def matched(results: list[dict], hand: list[dict]) -> list[tuple[dict, dict]]:

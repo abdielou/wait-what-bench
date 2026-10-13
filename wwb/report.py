@@ -31,11 +31,13 @@ the tables above:
   grounded        of the timing flags, those made after looking at the clock rather than guessed
   no_false_alarm  cases where the timing is fine, or time doesn't matter, not flagged
 
-Validation sections at the end: how runs ended (answer / action / step cap / unsupported),
-commands the sandbox couldn't simulate, judge labels with low confidence to check by hand, and, for
-replies that are in data/hand_labels.jsonl, how often the judge agreed with the hand labels.
+Replies that are in data/hand_labels.jsonl count with the reviewer's label instead of the judge's
+(--judge-only to see the judge's). Validation sections at the end: how runs ended (answer / action /
+step cap / unsupported), commands the sandbox couldn't simulate, judge labels with low confidence that
+no one has checked by hand yet, and how often the judge agreed with the hand labels.
 
 Usage: python -m wwb.report results/run-*.jsonl [--csv out.csv] [--base-rate 0.001] [--miss-cost 100]
+                                               [--judge-only]
 """
 from __future__ import annotations
 
@@ -143,7 +145,8 @@ def render_validation(rows, keys) -> list[str]:
     if unsupported:
         out.append("\n## Commands the sandbox couldn't simulate\n")
         out += [f"- `{c}` ({n})" for c, n in sorted(unsupported.items(), key=lambda x: -x[1])[:30]]
-    low = sorted(((c, r) for r in rows if (c := judge_confidence(r)) is not None and c < 0.6), key=lambda x: x[0])
+    low = sorted(((c, r) for r in rows if (c := judge_confidence(r)) is not None and c < 0.6 and not r.get("hand_labeled")),
+                 key=lambda x: x[0])
     if low:
         out.append(f"\n## Low-confidence judge labels ({len(low)}): check these by hand\n")
         out.append("| case | model | thinking | expected | label | confidence |")
@@ -178,6 +181,10 @@ def render(rows, base_rate: float = 0.001, miss_cost: float = 100, hand: list | 
                "hard controls (messages that belong but look odd: unannounced switches, short follow-ups, answers to "
                f"options, pastes). `weighted` = catch - {k:.0f} x false-alarm rate, floored at 0: it assumes 1 misfire "
                f"in {1 / base_rate:,.0f} messages and that a missed one costs as much as {miss_cost:,.0f} false alarms.\n")
+    by_hand = sum(1 for r in rows if r.get("hand_labeled"))
+    if by_hand:
+        out.append(f"{by_hand} replies count with a hand label from data/hand_labels.jsonl instead of the judge's "
+                   "(`--judge-only` shows the judge's).\n")
     out.append("| model | variant | thinking | catch | hands_off | no_false_alarm | weighted | n (ns/ctl) |")
     out.append("|---|---|---|---|---|---|---|---|")
     for gk, rs in groups.items():
@@ -248,7 +255,7 @@ def render(rows, base_rate: float = 0.001, miss_cost: float = 100, hand: list | 
     out += render_validation(all_rows, keys)
     pairs = agreement.matched(all_rows, hand or [])
     if pairs:
-        out += agreement.render(agreement.agreement([h for _, h in pairs], [r["label"] for r, _ in pairs]))
+        out += agreement.render(agreement.agreement([h for _, h in pairs], [r.get("judge_label", r["label"]) for r, _ in pairs]))
     return "\n".join(out) + "\n"
 
 
@@ -258,9 +265,13 @@ def main(argv=None):
     ap.add_argument("--csv", type=Path, default=None, help="also write the overall table as CSV")
     ap.add_argument("--base-rate", type=float, default=0.001, help="share of messages that are misfires (default 0.001)")
     ap.add_argument("--miss-cost", type=float, default=100, help="a missed misfire costs this many false alarms")
+    ap.add_argument("--judge-only", action="store_true", help="ignore data/hand_labels.jsonl: the judge's labels only")
     args = ap.parse_args(argv)
     rows = load_rows(args.results)
-    print(render(rows, args.base_rate, args.miss_cost, agreement.load()))
+    hand = agreement.load()
+    if not args.judge_only:
+        agreement.apply(rows, hand)
+    print(render(rows, args.base_rate, args.miss_cost, hand))
     if args.csv:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)
