@@ -457,6 +457,11 @@ def test_claude_request_shape(sessions):
     assert req["thinking"] == {"type": "between_tools"} and "output_config" not in req
     assert {t["name"] for t in req["tools"]} == {"read_file", "write_file", "edit_file", "run_command", "grep"}
     assert req["messages"][-1] == {"role": "user", "content": case.probe}
+    # Cached: the scripted history up to the probe, and the whole request for the run's next step.
+    assert req["cache_control"] == {"type": "ephemeral"}
+    marked = [(i, b) for i, m in enumerate(req["messages"]) if isinstance(m["content"], list)
+              for b in m["content"] if "cache_control" in b]
+    assert [i for i, _ in marked] == [len(req["messages"]) - 2] and marked[0][1]["type"] == "text"
     uses = [b["id"] for m in req["messages"] if m["role"] == "assistant" for b in m["content"] if b["type"] == "tool_use"]
     results = [b["tool_use_id"] for m in req["messages"] if m["role"] == "user" and isinstance(m["content"], list)
                for b in m["content"]]

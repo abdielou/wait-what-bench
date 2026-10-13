@@ -220,6 +220,20 @@ class AnthropicProvider:
         return system, out
 
     @staticmethod
+    def mark_history_end(msgs: list[dict]) -> None:
+        """Cache breakpoint on the last block before the probe (the last user message that isn't tool
+        results). Every case from the same session, prompt and model then reads the scripted history
+        from the cache instead of paying for it again."""
+        for i in range(len(msgs) - 1, 0, -1):
+            content = msgs[i]["content"]
+            results = isinstance(content, list) and content and all(b.get("type") == "tool_result" for b in content)
+            if msgs[i]["role"] == "user" and not results:
+                blocks = msgs[i - 1]["content"]
+                if isinstance(blocks, list) and blocks and blocks[-1].get("type") in ("text", "tool_use", "tool_result"):
+                    blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+                return
+
+    @staticmethod
     def to_anthropic_tools(tools: list[dict]) -> list[dict]:
         return [{"name": t["function"]["name"], "description": t["function"]["description"],
                  "input_schema": t["function"]["parameters"]} for t in tools]
@@ -236,8 +250,11 @@ class AnthropicProvider:
         if thinking_cfg is None:
             return Response(text="", error=f"thinking={thinking} is not available for {model}")
         system, msgs = self.to_anthropic(messages)
+        self.mark_history_end(msgs)
+        # Two cache breakpoints: the end of the scripted history (shared by every case from the same
+        # session) and, automatically, the end of the request (reused by the next step of the same run).
         kwargs: dict = {"model": model, "max_tokens": max_tokens or self.max_tokens, "messages": msgs,
-                        "thinking": thinking_cfg}
+                        "thinking": thinking_cfg, "cache_control": {"type": "ephemeral"}}
         if system:
             kwargs["system"] = system
         if tools:
