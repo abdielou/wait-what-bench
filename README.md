@@ -77,6 +77,7 @@ wwb/run.py             runner (concurrent, resumable)
 wwb/report.py          markdown/CSV summary
 docs/DESIGN.md         design rationale and open questions
 tools/find_misfires.py finds real misdirected messages in your own Claude Code transcripts
+wwb/replay.py          replays a real transcript on a model, up to the misdirected message
 CLAUDE.md              project context for coding agents
 ```
 
@@ -88,6 +89,13 @@ CLAUDE.md              project context for coding agents
 python3 tools/find_misfires.py                          # writes wwb-misfires/ and wwb-misfires.zip
 python3 tools/find_misfires.py --pattern "not you,? sorry"   # add phrases you use
 py tools\find_misfires.py                                # on Windows
+```
+
+`wwb/replay.py` then rebuilds what the model saw just before each misdirected message (the branch it was on, tool results, the reminders and instruction files Claude Code rendered), sends that message to a model, and records the first reply. Tool calls in the reply aren't run. Real transcripts are private: keep them and the replies out of the repo (the default output, `results/replays/`, is git-ignored), and label replies by hand rather than through the OpenRouter judge.
+
+```bash
+python -m wwb.replay wwb-misfires --dry-run                   # build the requests, count tokens (free)
+python -m wwb.replay wwb-misfires --out results/replays/haiku.jsonl   # Haiku, thinking off and on, 3 samples
 ```
 
 ## Adding sessions
