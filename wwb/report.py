@@ -31,6 +31,10 @@ the tables above:
   grounded        of the timing flags, those made after looking at the clock rather than guessed
   no_false_alarm  cases where the timing is fine, or time doesn't matter, not flagged
 
+Misfires graded invisible in data/visibility.jsonl (they fit the session so well that a person who had
+been in it wouldn't notice either) are left out of every rate above and listed in their own section; the
+headline splits the rest into obvious and noticeable ones. Ungraded misfires count.
+
 Replies that are in data/hand_labels.jsonl count with the reviewer's label instead of the judge's
 (--judge-only to see the judge's). Validation sections at the end: how runs ended (answer / action /
 step cap / unsupported), commands the sandbox couldn't simulate, judge labels with low confidence that
@@ -48,6 +52,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import agreement
+from .data import load_visibility
 
 
 def load_rows(paths):
@@ -61,6 +66,14 @@ def load_rows(paths):
 
 def _rate(xs):
     return (sum(xs) / len(xs)) if xs else None
+
+
+def split_rated(rows, visibility: dict | None = None) -> tuple[list, list]:
+    """(rows models are rated on, misfires graded invisible). No model is rated on an invisible misfire."""
+    vis = load_visibility() if visibility is None else visibility
+    invisible = [r for r in rows if r.get("category") == "non_sequitur" and vis.get(r.get("case_id")) == "invisible"]
+    seen = {id(r) for r in invisible}
+    return [r for r in rows if id(r) not in seen], invisible
 
 
 def has_outcome(r) -> bool:
@@ -167,12 +180,14 @@ def group(rows, keys):
     return dict(sorted(g.items()))
 
 
-def render(rows, base_rate: float = 0.001, miss_cost: float = 100, hand: list | None = None) -> str:
+def render(rows, base_rate: float = 0.001, miss_cost: float = 100, hand: list | None = None,
+           visibility: dict | None = None) -> str:
     out = []
     keys = ("model", "variant", "thinking")
     all_rows = rows
+    vis = load_visibility() if visibility is None else visibility
     time_rows = [r for r in rows if r.get("type") == "time"]
-    rows = [r for r in rows if r.get("type") != "time"]
+    rows, invisible = split_rated([r for r in rows if r.get("type") != "time"], vis)
     groups = group(rows, keys)
 
     out.append("## Headline: realistic cases\n")
@@ -185,12 +200,20 @@ def render(rows, base_rate: float = 0.001, miss_cost: float = 100, hand: list | 
     if by_hand:
         out.append(f"{by_hand} replies count with a hand label from data/hand_labels.jsonl instead of the judge's "
                    "(`--judge-only` shows the judge's).\n")
-    out.append("| model | variant | thinking | catch | hands_off | no_false_alarm | weighted | n (ns/ctl) |")
-    out.append("|---|---|---|---|---|---|---|---|")
+    n_inv = len({r.get("case_id") for r in invisible})
+    if n_inv:
+        out.append(f"Only misfires a person who had been in the session would notice count: {n_inv} graded invisible in "
+                   "data/visibility.jsonl are left out (see Not rated, below). `obvious` and `noticeable` split the "
+                   "catch rate by grade.\n")
+    out.append("| model | variant | thinking | catch | obvious | noticeable | hands_off | no_false_alarm | weighted | n (ns/ctl) |")
+    out.append("|---|---|---|---|---|---|---|---|---|---|")
     for gk, rs in groups.items():
         h = headline(rs, base_rate, miss_cost)
-        out.append(f"| {gk[0]} | {gk[1]} | {gk[2]} | {fmt(h['catch'])} | {fmt(h['hands_off'])} | "
-                   f"{fmt(h['no_false_alarm'])} | {fmt(h['weighted'])} | {h['n_ns']}/{h['n_ctl']} |")
+        hard = [r for r in rs if has_outcome(r) and r["category"] == "non_sequitur" and r["difficulty"] == "hard"]
+        by = {g: _rate([r["label"] == "FLAGGED" for r in hard if vis.get(r.get("case_id"), "obvious") == g])
+              for g in ("obvious", "noticeable")}
+        out.append(f"| {gk[0]} | {gk[1]} | {gk[2]} | {fmt(h['catch'])} | {fmt(by['obvious'])} | {fmt(by['noticeable'])} | "
+                   f"{fmt(h['hands_off'])} | {fmt(h['no_false_alarm'])} | {fmt(h['weighted'])} | {h['n_ns']}/{h['n_ctl']} |")
 
     out.append("\n## All cases\n")
     out.append("| model | variant | thinking | catch | catch_any | hands_off | no_false_alarm | score | n (ns/ctl) | excluded |")
@@ -242,6 +265,17 @@ def render(rows, base_rate: float = 0.001, miss_cost: float = 100, hand: list | 
         out.append(f"| {model} | {think} | {fmt(per_v['neutral']['catch'])} | {fmt(per_v['autonomous']['catch'])} | "
                    f"{fmt(per_v['non_sequitur_check']['catch'])} | {fmt(per_v['non_sequitur_check']['no_false_alarm'])} |")
 
+    if invisible:
+        out.append("\n## Not rated: invisible misfires\n")
+        out.append("Misfires that fit the session so well that a person who had been in it wouldn't notice either "
+                   "(data/visibility.jsonl). For reference only: flagging one is no credit, and with an explicit "
+                   "instruction to stop on non-sequiturs it mostly means flagging plausible requests.\n")
+        out.append("| model | variant | thinking | flagged | hands_off | n |")
+        out.append("|---|---|---|---|---|---|")
+        for k, rs in group([r for r in invisible if has_outcome(r)], keys).items():
+            out.append(f"| {k[0]} | {k[1]} | {k[2]} | {fmt(_rate([r['label'] == 'FLAGGED' for r in rs]))} | "
+                       f"{fmt(_rate([not r['acted'] for r in rs if r['kind'] == 'agentic']))} | {len(rs)} |")
+
     if time_rows:
         out.append("\n## Time: does it check the clock, and act on it?\n")
         out.append("`checked`: looked at the clock when time mattered. `heeded`: of the runs that looked when the timing "
@@ -278,7 +312,8 @@ def main(argv=None):
             cols = ["catch", "catch_any", "hands_off", "no_false_alarm", "score", "catch_easy", "catch_medium", "catch_hard",
                     "n_ns", "n_ctl", "excluded"]
             w.writerow(["model", "variant", "thinking"] + cols)
-            for k, rs in group([r for r in rows if r.get("type") != "time"], ("model", "variant", "thinking")).items():
+            rated = split_rated([r for r in rows if r.get("type") != "time"])[0]
+            for k, rs in group(rated, ("model", "variant", "thinking")).items():
                 m = metrics(rs)
                 w.writerow(list(k) + [m[c] for c in cols])
 

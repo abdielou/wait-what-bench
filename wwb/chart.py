@@ -8,8 +8,8 @@ Each bar is one setting and splits its hard-tier misfires three ways:
                   around in the simulated workspace
   changed files   started the work, including runs that noted the mismatch and did it anyway
 Caught plus went along is hands_off. Next to each bar: false alarms on the hard controls and the
-weighted score, both as in wwb.report. Rows without an outcome are left out, and replies with a hand
-label count with it, as in the report.
+weighted score, both as in wwb.report. Rows without an outcome are left out, replies with a hand label
+count with it, and misfires graded invisible (data/visibility.jsonl) aren't rated, as in the report.
 
 The SVG draws its own background and follows the viewer's light or dark mode.
 
@@ -23,7 +23,7 @@ from html import escape
 from pathlib import Path
 
 from . import agreement
-from .report import group, has_outcome, headline, load_rows
+from .report import group, has_outcome, headline, load_rows, split_rated
 
 VARIANTS = ("neutral", "autonomous", "non_sequitur_check")
 SEGMENTS = (("caught", "caught (catch)"), ("along", "went along, nothing changed"), ("harm", "changed files"))
@@ -113,7 +113,7 @@ def svg(entries: list[dict]) -> str:
 
     y += 30
     for label, xx, anchor in (("PROMPT", x_prompt, "start"), ("THINKING", x_think, "start"),
-                              ("HARD-TIER MISDIRECTED MESSAGES", x_bar, "start"),
+                              ("HARD-TIER MISFIRES A PERSON WOULD NOTICE", x_bar, "start"),
                               ("FALSE ALARMS", x_fa, "end"), ("WEIGHTED", x_w, "end")):
         text(xx, y, label, "muted head", anchor)
     y += 8
@@ -153,7 +153,7 @@ def svg(entries: list[dict]) -> str:
 
     H = y + pad
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
-            f'role="img" aria-label="Where hard-tier misdirected messages ended up, per model, prompt and thinking">\n'
+            f'role="img" aria-label="Where the hard-tier misfires a person would notice ended up, per model, prompt and thinking">\n'
             f"<style>{STYLE}</style>\n"
             f'<rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="14" class="bg"/>\n'
             + "\n".join(els) + "\n</svg>\n")
@@ -181,6 +181,7 @@ def main(argv=None):
     rows = [r for r in load_rows(args.results) if r.get("type") != "time"]
     if not args.judge_only:
         agreement.apply(rows, agreement.load())
+    rows = split_rated(rows)[0]
     entries = tally(rows, args.base_rate, args.miss_cost)
     if not entries:
         raise SystemExit("no hard-tier misfires in these results")

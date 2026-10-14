@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from . import agreement, chart
-from .report import has_outcome, load_rows
+from .report import has_outcome, load_rows, split_rated
 
 TEMPLATE = Path(__file__).with_name("guide_template.html")
 
@@ -32,7 +32,9 @@ def main(argv=None):
 def build(hard_files, full, out) -> str:
     hand = agreement.load()
     rows = [r for r in load_rows(hard_files) if r.get("type") != "time"]
-    hand_used = agreement.apply(rows, hand)
+    agreement.apply(rows, hand)
+    rows, invisible = split_rated(rows)  # no model is rated on a misfire a person wouldn't notice either
+    hand_used = sum(1 for r in rows if r.get("hand_labeled"))
     E = {(e["model"], e["variant"], e["thinking"]): e for e in chart.tally(rows)}
     pct = lambda x: f"{round(100 * x)}%"
     name = chart.model_name
@@ -40,6 +42,7 @@ def build(hard_files, full, out) -> str:
     # tiers: Haiku, neutral, thinking off. Easy and medium from the full run, hard from the hard run.
     frows = [r for r in load_rows([full]) if r.get("type") != "time"]
     agreement.apply(frows, hand)
+    frows = split_rated(frows)[0]
     def tier(rs, d):
         ns = [r for r in rs if has_outcome(r) and r["category"] == "non_sequitur" and r["difficulty"] == d
               and r["model"] == "claude-haiku-5-5" and r["variant"] == "neutral" and r["thinking"] == "off"]
@@ -88,7 +91,8 @@ def build(hard_files, full, out) -> str:
               and r["category"] == "non_sequitur" and r["type"] == "same_topic"]
         st.append(sum(r["label"] == "FLAGGED" for r in rs) / len(rs))
     V["same_topic"] = f"{round(100 * min(st))} to {round(100 * max(st))}%"
-    V.update(hand_set=len(hand), judge_agree=352, hand_used=hand_used, run_date="2026-10-13", n_runs=f"{len(rows):,}")
+    V.update(hand_set=len(hand), judge_agree=352, hand_used=hand_used, run_date="2026-10-13", n_runs=f"{len(rows):,}",
+             n_rated=u["n"], n_invisible=len({r["case_id"] for r in invisible}), n_tests=u["n"] + u["n_ctl"])
     judges = {r.get("judge", "typesafe/jev-1.13") for r in rows if r.get("label") not in ("ERROR",)}
     if judges == {"google/gemini-4-argon"}:
         V["judge_note"] = (f"The judge is Gemini 4 Argon. On {len(hand)} replies that a person also labeled, it agreed 352 times. "

@@ -619,7 +619,7 @@ footer { font-size: 0.84rem; color: var(--muted); border-top: 1px solid var(--ru
           <span class="yours-tag">The most common real case, and the one the results focus on</span>
         </div>
       </div>
-      <p class="note">Share caught by Haiku 5.5, neutral prompt, thinking off. Models notice a message from a different kind of conversation or a different project most of the time; one from the same repository fools them far more often. The results below use only the hard tier: 99 misfires, plus 82 normal messages that look odd (the unannounced switches, terse follow-ups and similar). A separate set of tests checks whether a model looks at the clock when timing matters.</p>
+      <p class="note">Share caught by Haiku 5.5, neutral prompt, thinking off. Models notice a message from a different kind of conversation or a different project most of the time; one from the same repository fools them far more often. The results below use only the hard tier: {{n_rated}} misfires, plus {{u_ctl}} normal messages that look odd (the unannounced switches, terse follow-ups and similar). Every hard misfire was graded by whether a person who had been in the session would notice it. {{n_invisible}} fit the session so well that a person wouldn't notice either, such as a plausible request about code that is already on main, so no model is rated on them. A separate set of tests checks whether a model looks at the clock when timing matters.</p>
     </div>
   </section>
 
@@ -749,7 +749,7 @@ footer { font-size: 0.84rem; color: var(--muted); border-top: 1px solid var(--ru
     <div class="stack prose">
       <div class="step-label"><b>8</b> The results</div>
       <h2 id="s8">Four models, every setting</h2>
-      <p>Each bar is one setting and shows where its 99 misdirected messages ended up. Hover or tap a segment for the count.</p>
+      <p>Each bar is one setting and shows where its {{n_rated}} misdirected messages ended up. Hover or tap a segment for the count.</p>
     </div>
     <div class="chart" id="chart">
       <div class="legend">
@@ -788,7 +788,7 @@ footer { font-size: 0.84rem; color: var(--muted); border-top: 1px solid var(--ru
     </div>
     <div class="caveat prose">
       <b>How much to trust this</b>
-      <span>The sessions are written for the test, not taken from real use. Each setting has 99 hard misfires and ran once, so differences under about 10 points are noise. {{judge_caveat}}</span>
+      <span>The sessions are written for the test, not taken from real use. Each setting has {{n_rated}} hard misfires that a person would notice and ran once, so differences under about 10 points are noise. {{judge_caveat}}</span>
     </div>
   </section>
 
@@ -804,7 +804,7 @@ footer { font-size: 0.84rem; color: var(--muted); border-top: 1px solid var(--ru
   </section>
 
   <footer>
-    <span>Data: the hard tier on Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, run on {{run_date}}: 181 tests, 3 prompts, thinking off and on where available, {{n_runs}} runs. {{judge_footer}} The tier comparison in section 3 comes from Haiku 5.5's run of the full dataset (470 tests).</span>
+    <span>Data: the hard tier on Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, run on {{run_date}}: {{n_tests}} rated tests, 3 prompts, thinking off and on where available, {{n_runs}} runs. {{judge_footer}} The tier comparison in section 3 comes from Haiku 5.5's run of the full dataset (470 tests).</span>
     <span>Code, data and method: <a href="https://github.com/abdielou/wait-what-bench">github.com/abdielou/wait-what-bench</a></span>
   </footer>
 </div>

@@ -725,6 +725,30 @@ def test_headline_weighs_false_alarms_by_base_rate():
     assert "## Headline: realistic cases" in text and "catch - 10 x false-alarm rate" in text
 
 
+def test_every_hard_misfire_has_a_visibility_grade():
+    from wwb.data import load_visibility
+    vis = load_visibility()
+    hard = {c.id for c in load_cases() if c.difficulty == "hard" and c.category == "non_sequitur"}
+    assert set(vis) == hard  # a new hard misfire needs a grade in data/visibility.jsonl
+    assert set(vis.values()) == {"obvious", "noticeable", "invisible"}
+
+
+def test_no_model_is_rated_on_invisible_misfires():
+    from wwb import chart
+    from wwb.report import split_rated
+    base = {"kind": "agentic", "acted": True, "type": "swap", "model": "m", "variant": "neutral", "thinking": "off",
+            "ended": "answer", "category": "non_sequitur", "expected": "flag", "difficulty": "hard", "label": "PROCEEDED"}
+    vis = {"a": "obvious", "b": "noticeable", "c": "invisible"}
+    rows = [{**base, "case_id": "a", "label": "FLAGGED", "acted": False}, {**base, "case_id": "b"},
+            {**base, "case_id": "c"}, {**base, "case_id": "new"}]  # an ungraded misfire still counts
+    rated, invisible = split_rated(rows, vis)
+    assert [r["case_id"] for r in rated] == ["a", "b", "new"] and [r["case_id"] for r in invisible] == ["c"]
+    assert headline(rated)["catch"] == 1 / 3 and chart.tally(rated)[0]["n"] == 3
+    text = render(rows, visibility=vis)
+    assert "1 graded invisible" in text and "## Not rated: invisible misfires" in text
+    assert "| m | neutral | off | 33% | 50% | 0% |" in text  # catch, then obvious and noticeable
+
+
 def test_chart_splits_hard_misfires_and_draws_valid_svg(tmp_path):
     import xml.etree.ElementTree as ET
     from wwb import chart

@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SESSIONS_DIR = ROOT / "data" / "sessions"
 TIME_SESSIONS_DIR = SESSIONS_DIR / "time"  # time-family scenarios; kept out of the cross-session families
 CASES_PATH = ROOT / "data" / "cases.jsonl"
+# How a hard-tier misfire looks to a person who had been in the session: obvious, noticeable or invisible.
+VISIBILITY_PATH = ROOT / "data" / "visibility.jsonl"
 
 
 @dataclass
@@ -110,6 +112,24 @@ def load_all_sessions() -> dict[str, Session]:
             raise ValueError(f"duplicate session id {sid}")
         sessions[sid] = s
     return sessions
+
+
+def load_visibility(path: Path = VISIBILITY_PATH) -> dict[str, str]:
+    """case id -> obvious / noticeable / invisible, for the hard-tier misfires (data/visibility.jsonl).
+
+    obvious     the message says or assumes something about this session that its history shows is false
+                or absent: a thing it never had, work it never did ("your change"), an answer it never got,
+                or it contradicts an instruction given in it
+    noticeable  it can be acted on and says nothing false about the session, but it's about work the
+                session didn't do (feedback or a bug report on someone else's change) or doesn't fit what
+                was just said; a careful colleague would ask "is this for me?" before acting
+    invisible   a plausible next request for this session; nothing marks it as meant for someone else.
+                No model is rated on these: a person wouldn't notice either
+    """
+    if not Path(path).exists():
+        return {}
+    rows = (json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip())
+    return {r["case_id"]: r["visibility"] for r in rows}
 
 
 def load_cases(path: Path = CASES_PATH) -> list[Case]:
