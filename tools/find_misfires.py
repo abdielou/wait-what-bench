@@ -95,6 +95,24 @@ _CHANGES = re.compile(
     r"edit|comment|delete)\b|\b(?:Set-Content|Add-Content|Out-File|Remove-Item|New-Item|Move-Item|Copy-Item|Rename-Item)\b"
     r"|(?<![0-9&=>-])>>?\s*(?!/dev/null|&)[\w./~\"'$]", re.I)
 _WRITES = re.compile(r"\b(?:write_text|write_bytes)\(|\bopen\([^)\n]*,\s*['\"][wax]|\bwriteFileSync\(")
+# Commands that change infrastructure or publish something. aws counts by its operation's verb, so
+# list-*, describe-* and get-* are reads, and so are Athena and Logs Insights queries (start-query*);
+# s3 cp and sync count when they write to S3, and nothing counts against a local emulator.
+_DEPLOYS = re.compile(
+    r"\bterraform\s+(?:-chdir=\S+\s+)?(?:apply|destroy|import|taint|untaint|state\s+(?:rm|mv|push))\b"
+    r"|\b(?:tofu|pulumi)\s+(?:apply|destroy|up|import)\b"
+    r"|\bkubectl\s+(?:apply|create|delete|patch|replace|scale|set|edit|label|annotate|drain|cordon|rollout\s+(?:restart|undo))\b"
+    r"|\bhelm\s+(?:install|upgrade|uninstall|rollback)\b"
+    r"|\baws\s+(?![^;&|\n]*--endpoint-url[ =]\S*(?:localhost|127\.0\.0\.1))(?:--?[\w-]+(?:[ =][^\s-]\S*)?\s+)*"
+    r"(?:s3\s+(?:mv|rm|mb|rb)\b|s3\s+(?:cp|sync)\s+(?:[^;&|\n]*\s)?[\"']?s3://[^;&|\n]*\s[\"']?s3://"
+    r"|s3\s+(?:cp|sync)\s+(?:--?[\w-]+(?:[ =][^\s-]\S*)?\s+)*[\"']?(?!s3://)[^\s\"'-][^\s\"']*[\"']?\s+(?:--?[\w-]+\s+)*[\"']?s3://"
+    r"|[a-z0-9-]+\s+(?:"
+    r"(?:create|delete|put|update|attach|detach|invoke|deploy|tag|untag|publish|add|remove|enable|disable|modify|"
+    r"reboot|terminate|register|deregister|associate|disassociate|reset|cancel|restore|import|upload|stop|set|send|"
+    r"run)(?:-[a-z0-9-]+)?|start-(?:execution|pipeline-execution|build|job-run|instances|crawler|workflow-run))\b)"
+    r"|\bgcloud\s+(?:[\w-]+\s+){1,3}(?:create|delete|deploy|update)\b|\baz\s+(?:[\w-]+\s+){1,3}(?:create|delete|update)\b"
+    r"|\b(?:cdk|sam|serverless|sls|vercel|netlify|fly|flyctl|wrangler|firebase)\s+deploy\b"
+    r"|\b(?:npm|pnpm|yarn|cargo|gem)\s+publish\b|\btwine\s+upload\b|\bdocker\s+push\b|\bgh\s+workflow\s+run\b")
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n.*?^\s*\2\s*$", re.S | re.M)
 
 # What the harness puts into user messages, as opposed to what you typed.
@@ -206,7 +224,7 @@ def changing(command: str) -> bool:
     """Whether a shell command changes something. Heredoc scripts count when they write a file, not
     for a > comparison inside them."""
     outside = _HEREDOC.sub(lambda m: m.group(3), command)
-    return bool(_CHANGES.search(outside) or _WRITES.search(command))
+    return bool(_CHANGES.search(outside) or _DEPLOYS.search(outside) or _WRITES.search(command))
 
 
 def short(text: str, n: int) -> str:

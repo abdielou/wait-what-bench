@@ -231,6 +231,20 @@ def test_changing_commands():
              "git show --stat 3f9c2e1", "cargo fmt --all --check && echo fmt-ok", "grep -rn foo . 2>/dev/null",
              "cargo build --workspace 2>&1 | tail -2", "python - <<'EOF'\nimport json\nprint(len([1, 2]) > 1)\nEOF",
              "grep -n \"rm \" Makefile", "git log --format='%h -> %s' | head", "npm test", "ls -la; git tag -l"]
+    changes += ["cd infra/sandbox && terraform apply -input=false -auto-approve -target=module.ci 2>&1 | head -20",
+                "terraform -chdir=infra/staging destroy", "export AWS_PROFILE=dev; aws stepfunctions start-execution --name x",
+                "aws s3 sync dist/ s3://site-bucket --delete", "aws s3 cp --recursive build s3://site/",
+                "aws s3 cp s3://a/x.json s3://b/x.json", "aws s3 rm s3://lake-raw/bad --recursive", "aws --region us-east-1 lambda update-function-code --zip-file b",
+                "aws iam create-role --role-name ci", "aws lambda invoke --function-name f out.json", "kubectl apply -f k8s/",
+                "helm upgrade api ./chart", "npx cdk deploy --all", "npm publish", "gh workflow run deploy.yml"]
+    reads += ["terraform plan -out tf.plan", "terraform -chdir=infra/dev validate", "aws iam list-users",
+              "aws iam simulate-principal-policy --policy-source-arn arn:x --action-names s3:GetObject",
+              "aws --profile prod stepfunctions list-executions --status-filter RUNNING", "aws configure list",
+              "aws athena start-query-execution --query-string 'SELECT 1'", "aws logs start-query --log-group-name g",
+              "aws ec2 describe-instances", "kubectl get pods -n api", "helm list",
+              "aws s3 cp \"s3://lake-raw/$k\" - 2>/dev/null | head", "aws s3 cp s3://lake-raw/a.json \"$TMP/a.json\"",
+              "aws s3 sync s3://lake-raw/day=1 ./local", "aws stepfunctions create-state-machine --endpoint-url "
+              "http://localhost:8083 --name P --definition file://d.json"]
     assert [c for c in changes if not fm.changing(c)] == []
     assert [c for c in reads if fm.changing(c)] == []
 
